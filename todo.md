@@ -3,17 +3,17 @@
 Dieser Plan beschreibt detailliert, was für die End-to-End-Lösung zu bauen ist: Backend (Quelle der Wahrheit), Dashboard-Frontend (Verwaltung), Widget/Embed (Kundenintegration), Infrastruktur/DevOps, Sicherheit und Qualitätssicherung.
 
 ## Ziele (High-Level)
-- [ ] Chatbot-Objekte erstellen, verwalten und hosten (Backend als Source of Truth)
-- [ ] Benutzer-Auth via Appwrite (Admin/Dashboard), anonyme Widget-Nutzung via Sessions
+- [x] Chatbot-Objekte erstellen, verwalten und hosten (Backend als Source of Truth)
+- [x] Benutzer-Auth via Appwrite (Admin/Dashboard), anonyme Widget-Nutzung via Sessions
 - [ ] Einbettbarer Chatbot (Loader `embed.js` + Widget-Iframe) inkl. Domain-Allowlist und Session-Token
 - [ ] Trainings-/Wissensquellen verwalten (Mock → später echte Pipeline)
 - [ ] Monitoring/Analytics (Nutzungsmetriken, Fehler, Ratenbegrenzung)
 
 ## Architektur-Leitlinien
-- [ ] Klare Trennung: Auth/Benutzerverwaltung (Appwrite) vs. Fachlogik/Chatbots (Backend)
-- [ ] Backend verwaltet IDs, Datenmodell, Sicherheits- und Ratenlimits
-- [ ] Widget (Iframe) kommuniziert nur über öffentliche, minimal berechtigte Endpunkte
-- [ ] Konfiguration über Env-Variablen, Secrets nie ins Frontend bundeln
+- [x] Klare Trennung: Auth/Benutzerverwaltung (Appwrite) vs. Fachlogik/Chatbots (Backend)
+- [x] Backend verwaltet IDs, Datenmodell, Sicherheits- und Ratenlimits
+- [x] Widget (Iframe) kommuniziert nur über öffentliche, minimal berechtigte Endpunkte
+- [x] Konfiguration über Env-Variablen, Secrets nie ins Frontend bundeln
 - [ ] Versionierte, statische Auslieferung von `embed.js` via CDN
 
 ---
@@ -21,50 +21,50 @@ Dieser Plan beschreibt detailliert, was für die End-to-End-Lösung zu bauen ist
 ## Backend (API & Services)
 
 ### 1) Datenmodell
-- [ ] `users` (optional, wenn Appwrite User gespiegelt werden müssen: `id`, `email`, `createdAt`)
-- [ ] `chatbots` (`id`, `userId`, `name`, `description`, `allowedDomains[]`, `theme`, `model`, `status`, `createdAt`, `updatedAt`)
-- [ ] `sessions` (`id`, `chatbotId`, `origin`, `ip`, `expiresAt`, `createdAt`)
-- [ ] `messages` (`id`, `sessionId`, `role` [user|assistant|system], `content`, `createdAt`)
+- [x] `users` (optional, wenn Appwrite User gespiegelt werden müssen: `id`, `email`, `createdAt`)
+- [x] `chatbots` (`id`, `userId`, `name`, `description`, `allowedDomains[]`, `theme`, `model`, `status`, `createdAt`, `updatedAt`)
+- [x] `sessions` (`id`, `chatbotId`, `origin`, `ip`, `expiresAt`, `createdAt`)
+- [x] `messages` (`id`, `sessionId`, `role` [user|assistant|system], `content`, `createdAt`)
 - [ ] (optional) `analytics_events` (`id`, `chatbotId`, `event`, `meta`, `createdAt`)
-- [ ] (optional) Wissensbasis-Tabellen: `knowledge_sources`, `scraped_content`, `embeddings`
+- [x] (optional) Wissensbasis-Tabellen: `knowledge_sources`, `scraped_content`, `embeddings`
 
 Akzeptanzkriterien:
-- [ ] Eindeutige Indizes (z. B. `chatbots.id`, `sessions.id`)
-- [ ] Foreign Keys (z. B. `sessions.chatbotId → chatbots.id`)
+- [x] Eindeutige Indizes (z. B. `chatbots.id`, `sessions.id`)
+- [x] Foreign Keys (z. B. `sessions.chatbotId → chatbots.id`)
 
 ### 2) Authentifizierung & Autorisierung
-- [ ] Admin-Endpunkte schützen (Appwrite JWT/Session verifizieren → Besitzerrechte auf `chatbots.userId` prüfen)
-- [ ] Öffentliche Widget-Endpunkte: Nur erforderliche Daten; Schutz über Domain-Allowlist + ephemere Tokens
+- [x] Admin-Endpunkte schützen (Appwrite JWT/Session verifizieren → Besitzerrechte auf `chatbots.userId` prüfen)
+- [x] Öffentliche Widget-Endpunkte: Nur erforderliche Daten; Schutz über Domain-Allowlist + ephemere Tokens
 
 ### 3) Endpunkte (erste Iteration)
-- [ ] `POST /api/chatbots` (auth): Chatbot anlegen
+- [x] `POST /api/chatbots` (auth): Chatbot anlegen
   - Input: `{ name, description?, allowedDomains, theme?, model? }`
   - Output: `{ id, ... }`
-- [ ] `GET /api/chatbots` (auth): Liste der eigenen Chatbots
-- [ ] `GET /api/chatbots/:id` (auth): Details (nur Owner)
-- [ ] `PATCH /api/chatbots/:id` (auth): Update (Name, Domain-Liste, Theme, Model)
-- [ ] `DELETE /api/chatbots/:id` (auth)
-- [ ] `POST /api/chat/sessions` (public): Session für Widget erzeugen
+- [x] `GET /api/chatbots` (auth): Liste der eigenen Chatbots
+- [x] `GET /api/chatbots/:id` (auth): Details (nur Owner)
+- [x] `PATCH /api/chatbots/:id` (auth): Update (Name, Domain-Liste, Theme, Model)
+- [x] `DELETE /api/chatbots/:id` (auth)
+- [x] `POST /api/chat/sessions` (public): Session für Widget erzeugen
   - Prüft `Origin`/`Referer` gegen `allowedDomains`
   - Liefert `{ sessionId, token (kurzlebig) }`
-- [ ] `POST /api/chat/messages` (public): Nutzerfrage → Antwort
+- [x] `POST /api/chat/messages` (public): Nutzerfrage → Antwort
   - Input: `{ sessionId, message }` + Header `Authorization: Bearer <token>`
   - Output: gestreamte Antwort (SSE) oder Chunked JSON
 
 Akzeptanzkriterien:
-- [ ] 403, wenn Domain nicht erlaubt ist
-- [ ] 401, wenn Token ungültig/abgelaufen ist
-- [ ] Rate Limit (z. B. pro `sessionId`/IP)
+- [x] 403, wenn Domain nicht erlaubt ist
+- [x] 401, wenn Token ungültig/abgelaufen ist
+- [x] Rate Limit (z. B. pro `sessionId`/IP)
 
 ### 4) Chat-Logik
-- [ ] Einfache Echo-/Mock-Antworten (MVP), danach LLM-Integration (OpenAI) mit Streaming
-- [ ] (optional) Retrieval über Embeddings/Vector-DB
-- [ ] Konsistente Protokollierung der Konversation (`messages`)
+- [x] Einfache Echo-/Mock-Antworten (MVP), danach LLM-Integration (OpenAI) mit Streaming
+- [x] (optional) Retrieval über Embeddings/Vector-DB
+- [x] Konsistente Protokollierung der Konversation (`messages`)
 
 ### 5) Training/Wissensbasis (später)
-- [ ] Endpunkte für Quellen: `POST /api/knowledge/sources`, `GET /api/knowledge/sources`, `DELETE /...`
-- [ ] Scraping-Worker (Queue), Persistenz, Embeddings-Generierung
-- [ ] Relevanzsuche (pgvector/Vector-Store)
+- [x] Endpunkte für Quellen: `POST /api/knowledge/sources`, `GET /api/knowledge/sources`, `DELETE /...`
+- [x] Scraping-Worker (Queue), Persistenz, Embeddings-Generierung
+- [x] Relevanzsuche (pgvector/Vector-Store)
 
 ### 6) Qualitätssicherung
 - [ ] Unit-Tests: Services (Tokening, Domain-Checks, Rate Limits, Parser)
@@ -137,29 +137,29 @@ Akzeptanzkriterien:
 ---
 
 ## Sicherheit, Compliance, Stabilität
-- [ ] CORS: nur erlaubte Domains, preflight getestet
-- [ ] Rate Limiting/DoS-Schutz auf `sessions` und `messages`
-- [ ] Token-TTL kurz (z. B. 1h), Refresh-Flow optional
-- [ ] Input-Validierung (Hostnamen, URLs, Größenlimits)
-- [ ] Logging: strukturierte Logs (Korrelation über `sessionId`)
+- [x] CORS: nur erlaubte Domains, preflight getestet
+- [x] Rate Limiting/DoS-Schutz auf `sessions` und `messages`
+- [x] Token-TTL kurz (z. B. 1h), Refresh-Flow optional
+- [x] Input-Validierung (Hostnamen, URLs, Größenlimits)
+- [x] Logging: strukturierte Logs (Korrelation über `sessionId`)
 - [ ] Privacy: personenbezogene Daten minimieren/anonymisieren
 
 ---
 
 ## Infrastruktur & Deployment
-- [ ] Env-Variablen definieren (Backend: Keys, DB, OpenAI, JWT_SECRET, CORS_ORIGINS)
+- [x] Env-Variablen definieren (Backend: Keys, DB, OpenAI, JWT_SECRET, CORS_ORIGINS)
 - [ ] Statische Auslieferung `embed.js`/Widget via CDN (Cache, Immutable-Assets)
-- [ ] Backend als Container (Docker) + Orchestrierung (Railway/Vercel functions/Render/Fly.io/CloudRun)
+- [x] Backend als Container (Docker) + Orchestrierung (Railway/Vercel functions/Render/Fly.io/CloudRun)
 - [ ] CI/CD: Lint, Test, Build, Deploy; Tagging/Versionierung
 - [ ] Monitoring/Alerting: Uptime, Fehlerquoten, Latenzen, Rate-Limits
 
 ---
 
 ## Meilensteine (inkrementell)
-1. [ ] MVP Backend: `POST /chatbots`, `POST /chat/sessions`, `POST /chat/messages` (Mock)
+1. [x] MVP Backend: `POST /chatbots`, `POST /chat/sessions`, `POST /chat/messages` (Mock)
 2. [ ] Dashboard: Chatbot CRUD + Snippet-Dialog
 3. [ ] `embed.js` + Iframe-Widget (lokal testbar)
-4. [ ] Domain-Allowlist + Token-Absicherung (E2E)
+4. [x] Domain-Allowlist + Token-Absicherung (E2E)
 5. [ ] LLM-Streaming (OpenAI) in `/chat/messages`
 6. [ ] Basic Analytics (Zählung Sessions/Anfragen), Rate Limit
 7. [ ] Trainings-UI (Mock) → später Scraping/Embeddings
@@ -168,8 +168,7 @@ Akzeptanzkriterien:
 
 ## Definition of Done (DoD)
 - [ ] Build & Tests in CI grün
-- [ ] Dokumentierte Endpunkte (OpenAPI/README)
+- [x] Dokumentierte Endpunkte (OpenAPI/README)
 - [ ] Snippet funktioniert auf externer Demo-Seite (Allowlist greift)
 - [ ] Fehlerpfade (401/403/429/5xx) eindeutig und getestet
 - [ ] Logging/Monitoring aktiv
-

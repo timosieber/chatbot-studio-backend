@@ -83,3 +83,9 @@ DELETE /api/knowledge/sources/:id   # Quelle löschen
 - Mit `ALLOW_DEBUG_HEADERS=true` kann in lokalen Tests via `x-mock-user-id` ein Dashboard-User simuliert werden.
 - `POST /api/chat/sessions` muss mit korrektem `Origin`-Header aufgerufen werden (entspricht erlaubter Domain).
 - Für Produktionsbetrieb Datenbank + Pinecone/OpenAI konfigurieren und `VECTOR_DB_PROVIDER=pinecone` setzen.
+- Für Railway-Deployments:
+  1. `Dockerfile` und `.dockerignore` sind bereits vorbereitet.
+  2. Neues Railway-Projekt erstellen → „Deploy from GitHub“ → Repo verbinden.
+  3. In den Railway-Settings die notwendigen Env-Variablen setzen (`DATABASE_URL`, `JWT_SECRET`, `SCRAPER_DIR`, etc.). Für SQLite sollte auf Railway eine externe DB (z. B. Postgres) verwendet werden.
+  4. Build command: `npm run build` (über Docker automatisch) – Start command: `node dist/index.js`.
+  5. Optional: separaten Service für den `IDPA-Scraper` auf Railway deployen, falls der Scraper nicht lokal ausgeführt werden soll. Dann `SCRAPER_DIR` bzw. `scraperRunner` auf eine Remote-API umstellen.
