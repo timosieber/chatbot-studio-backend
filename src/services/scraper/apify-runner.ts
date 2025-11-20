@@ -4,8 +4,8 @@ import { logger } from "../../lib/logger.js";
 import { buildScraperInputPayload } from "./input-utils.js";
 import type { DatasetItem, ScrapeOptions } from "./types.js";
 
-// Sehr großes Timeout - lässt den Scraper praktisch unbegrenzt laufen (24 Stunden)
-const RUN_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+// Fallback-Timeout für unsere eigene Anfrage (2 Stunden)
+const RUN_TIMEOUT_MS = 2 * 60 * 60 * 1000;
 
 const trimTrailingSlashes = (url: string) => url.replace(/\/+$/, "");
 
@@ -36,6 +36,8 @@ export class ApifyScraperRunner {
     requestUrl.searchParams.set("token", config.token);
     requestUrl.searchParams.set("format", "json");
     requestUrl.searchParams.set("clean", "1");
+    // Apify beendet run-sync standardmäßig nach ~5 Minuten; wir warten bis zu 2 Stunden
+    requestUrl.searchParams.set("timeout", (2 * 60 * 60).toString());
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), RUN_TIMEOUT_MS);
