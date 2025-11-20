@@ -29,7 +29,7 @@ class LlmService {
       ? `\n\nRelevanter Kontext aus der Wissensdatenbank:\n${context.map((c, i) => `[${i + 1}] ${c}`).join("\n\n")}`
       : "";
 
-    const systemPrompt = [
+    const developerInstructions = [
       `Du bist der hilfreiche Assistent "${chatbot.name}".`,
       chatbot.description ?? "",
       "Deine Aufgabe:",
@@ -48,19 +48,33 @@ class LlmService {
       return `(${chatbot.name}) Ich habe deine Frage verstanden: "${question}".\n\nKontextauszug: ${snippet || "Kein Kontext verfügbar."}`;
     }
 
-    const completion = await this.client.chat.completions.create({
+    // Convert messages to new Responses API format
+    const inputMessages: Array<{ role: "developer" | "user" | "assistant"; content: string }> = [
+      { role: "developer", content: developerInstructions },
+    ];
+
+    // Add conversation history
+    for (const msg of messages) {
+      if (msg.role === "user") {
+        inputMessages.push({ role: "user", content: msg.content });
+      } else if (msg.role === "assistant") {
+        inputMessages.push({ role: "assistant", content: msg.content });
+      }
+    }
+
+    // Add current question
+    inputMessages.push({ role: "user", content: question });
+
+    // Use new Responses API
+    const response = await this.client.responses.create({
       model: chatbot.model || env.OPENAI_COMPLETIONS_MODEL,
-      messages: [
-        { role: "system", content: systemPrompt },
-        ...messages,
-        { role: "user", content: question },
-      ],
+      input: inputMessages,
+      reasoning: { effort: "medium" },
       temperature: 0.3,
-      max_tokens: 1000,
-      stream: false,
     });
 
-    return completion.choices[0]?.message?.content?.trim() ?? "Ich konnte keine Antwort generieren.";
+    // Extract text from response output
+    return response.output_text ?? "Ich konnte keine Antwort generieren.";
   }
 }
 
