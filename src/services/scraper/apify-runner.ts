@@ -4,8 +4,8 @@ import { logger } from "../../lib/logger.js";
 import { buildScraperInputPayload } from "./input-utils.js";
 import type { DatasetItem, ScrapeOptions } from "./types.js";
 
-// Kein Timeout - lässt den Scraper so lange laufen wie nötig
-const RUN_TIMEOUT_MS = Infinity;
+// Sehr großes Timeout - lässt den Scraper praktisch unbegrenzt laufen (24 Stunden)
+const RUN_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 
 const trimTrailingSlashes = (url: string) => url.replace(/\/+$/, "");
 
