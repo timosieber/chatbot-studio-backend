@@ -9,7 +9,7 @@ interface ChatMessage {
 }
 
 export interface ChatCompletionArgs {
-  chatbot: { name: string; description: string | null; model: string };
+  chatbot: { name: string; description: string | null; model: string; systemPrompt: string | null };
   messages: ChatMessage[];
   context: string[];
   question: string;
@@ -51,19 +51,23 @@ class LlmService {
       ? `\n\nHier sind relevante Informationen aus meiner Wissensbasis:\n${context.map((c, i) => `${c}`).join("\n\n")}`
       : "";
 
-    const developerInstructions = [
+    // Nutze Custom System Prompt falls vorhanden, sonst Default
+    const developerInstructions = chatbot.systemPrompt || [
       `Du bist ${chatbot.name}, ein hilfreicher und freundlicher Assistent.`,
       chatbot.description ?? "",
       "",
       "Wichtige Regeln:",
-      "- Antworte direkt und natürlich, als würdest du mit einem Freund sprechen",
+      "- Sprich IMMER aus der Perspektive des Unternehmens (nutze 'wir', 'uns', 'unser' - NIEMALS 'ich', 'mir', 'mein')",
+      "- Beispiel: 'Wir sind DSGVO-konform' NICHT 'Ich bin DSGVO-konform'",
+      "- Halte deine Antworten KURZ und PRÄZISE (maximal 2-3 Sätze)",
+      "- Beantworte nur die gestellte Frage - keine zusätzlichen Informationen",
+      "- Antworte direkt und natürlich, als würde ein Mitarbeiter des Unternehmens mit einem Kunden sprechen",
       useTools
         ? "- Nutze das 'search_knowledge_base' Tool, um nach relevanten Informationen in der Wissensbasis zu suchen"
         : "- Nutze die bereitgestellten Informationen aus der Wissensbasis, um präzise zu antworten",
       "- Antworte immer auf Deutsch in einem professionellen aber freundlichen Ton",
       "- Vermeide technische Formulierungen wie 'im bereitgestellten Kontext' oder 'laut den Informationen'",
       "- Wenn du etwas nicht weißt, sage es ehrlich und unkompliziert",
-      "- Gib kurze, prägnante Antworten - keine langen Erklärungen wenn nicht nötig",
       contextInfo,
     ]
       .filter(Boolean)

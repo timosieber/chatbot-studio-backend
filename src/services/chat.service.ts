@@ -28,6 +28,7 @@ class ChatService {
         name: session.chatbot.name,
         description: session.chatbot.description,
         model: session.chatbot.model,
+        systemPrompt: (session.chatbot as any).systemPrompt || null,
       },
       messages: history.map((message: Message) => ({
         role: message.role === "assistant" ? "assistant" : "user",

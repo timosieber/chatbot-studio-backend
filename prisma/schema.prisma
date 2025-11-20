@@ -48,6 +48,8 @@ model Chatbot {
   user           User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
   name           String
   description    String?
+  systemPrompt   String?
+  logoUrl        String?
   allowedDomains Json                 @default("[]")
   theme          Json?
   model          String               @default("gpt-4o-mini")
