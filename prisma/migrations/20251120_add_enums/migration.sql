@@ -1,14 +1,30 @@
--- CreateEnum
-CREATE TYPE "ChatbotStatus" AS ENUM ('DRAFT', 'ACTIVE', 'PAUSED', 'ARCHIVED');
+-- CreateEnum (only if not exists)
+DO $$ BEGIN
+ CREATE TYPE "ChatbotStatus" AS ENUM ('DRAFT', 'ACTIVE', 'PAUSED', 'ARCHIVED');
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
 
--- CreateEnum
-CREATE TYPE "MessageRole" AS ENUM ('system', 'user', 'assistant');
+-- CreateEnum (only if not exists)
+DO $$ BEGIN
+ CREATE TYPE "MessageRole" AS ENUM ('system', 'user', 'assistant');
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
 
--- CreateEnum
-CREATE TYPE "KnowledgeSourceType" AS ENUM ('URL', 'TEXT', 'FILE');
+-- CreateEnum (only if not exists)
+DO $$ BEGIN
+ CREATE TYPE "KnowledgeSourceType" AS ENUM ('URL', 'TEXT', 'FILE');
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
 
--- CreateEnum
-CREATE TYPE "KnowledgeSourceStatus" AS ENUM ('PENDING', 'READY', 'FAILED');
+-- CreateEnum (only if not exists)
+DO $$ BEGIN
+ CREATE TYPE "KnowledgeSourceStatus" AS ENUM ('PENDING', 'READY', 'FAILED');
+EXCEPTION
+ WHEN duplicate_object THEN null;
+END $$;
 
 -- AlterTable Chatbot - Change status column from TEXT to ChatbotStatus
 ALTER TABLE "Chatbot" ALTER COLUMN "status" TYPE "ChatbotStatus" USING ("status"::text::"ChatbotStatus");
