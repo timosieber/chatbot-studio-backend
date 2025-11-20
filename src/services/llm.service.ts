@@ -65,14 +65,13 @@ class LlmService {
     // Add current question
     inputMessages.push({ role: "user", content: question });
 
-    // Use Chat Completions API with GPT-4o (stable and widely available)
+    // Use Chat Completions API with GPT-5.1 (without reasoning.effort parameter)
     const completion = await this.client.chat.completions.create({
       model: chatbot.model || env.OPENAI_COMPLETIONS_MODEL,
       messages: inputMessages.map(msg => ({
         role: msg.role === "developer" ? "system" : msg.role,
         content: msg.content,
       })),
-      temperature: 0.3,
       max_tokens: 1000,
       stream: false,
     });
