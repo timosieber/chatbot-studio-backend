@@ -15,7 +15,7 @@ export const DEFAULT_SCRAPER_INPUT = {
   allowFullDownload: false,
   timeoutHtmlMs: 120000,  // 2 Minuten für langsame Seiten
   timeoutHeadMs: 30000,   // 30 Sekunden für HEAD requests
-  timeoutPdfOpenMs: 180000, // 3 Minuten für große PDFs
+  timeoutPdfOpenMs: 120000, // 2 Minuten für große PDFs (Apify Maximum)
   doImageHead: true,
   doImageRangeMeta: false,
 };
