@@ -65,17 +65,19 @@ class LlmService {
     // Add current question
     inputMessages.push({ role: "user", content: question });
 
-    // Use new Responses API with GPT-5.1 parameters
-    const response = await this.client.responses.create({
+    // Use Chat Completions API with GPT-4o (stable and widely available)
+    const completion = await this.client.chat.completions.create({
       model: chatbot.model || env.OPENAI_COMPLETIONS_MODEL,
-      input: inputMessages,
-      reasoning: { effort: "medium" }, // none, low, medium, high
-      text: { verbosity: "medium" }, // low, medium, high
-      max_output_tokens: 1000,
+      messages: inputMessages.map(msg => ({
+        role: msg.role === "developer" ? "system" : msg.role,
+        content: msg.content,
+      })),
+      temperature: 0.3,
+      max_tokens: 1000,
+      stream: false,
     });
 
-    // Extract text from response output
-    return response.output_text ?? "Ich konnte keine Antwort generieren.";
+    return completion.choices[0]?.message?.content?.trim() ?? "Ich konnte keine Antwort generieren.";
   }
 }
 
