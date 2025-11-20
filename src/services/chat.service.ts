@@ -15,7 +15,14 @@ class ChatService {
     const history = await messageService.getRecentMessages(session.id);
     await messageService.logMessage(session.id, "user", content);
 
-    const context = await knowledgeService.retrieveContext(session.chatbotId, content);
+    // Initial context retrieval (wird nur genutzt wenn kein Tool Calling aktiv ist)
+    const initialContext = await knowledgeService.retrieveContext(session.chatbotId, content);
+
+    // Callback für Tool Calling - ermöglicht dem LLM, selbst nach Informationen zu suchen
+    const onToolCall = async (query: string): Promise<string[]> => {
+      return await knowledgeService.retrieveContext(session.chatbotId, query);
+    };
+
     const response = await llmService.generateResponse({
       chatbot: {
         name: session.chatbot.name,
@@ -26,13 +33,14 @@ class ChatService {
         role: message.role === "assistant" ? "assistant" : "user",
         content: message.content,
       })),
-      context,
+      context: initialContext,
       question: content,
+      onToolCall, // Aktiviert Function Calling
     });
 
     await messageService.logMessage(session.id, "assistant", response);
 
-    return { answer: response, context };
+    return { answer: response, context: initialContext };
   }
 }
 

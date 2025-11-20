@@ -13,7 +13,26 @@ export interface ChatCompletionArgs {
   messages: ChatMessage[];
   context: string[];
   question: string;
+  onToolCall?: (query: string) => Promise<string[]>;
 }
+
+const SEARCH_KNOWLEDGE_BASE_TOOL = {
+  type: "function" as const,
+  function: {
+    name: "search_knowledge_base",
+    description: "Durchsucht die Wissensbasis des Chatbots nach relevanten Informationen. Nutze dieses Tool, wenn du spezifische Informationen zu einem Thema brauchst.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Die Suchanfrage für die Wissensbasis. Formuliere präzise Suchbegriffe, z.B. 'DSGVO Compliance', 'Datenschutz', 'Kontaktdaten'",
+        },
+      },
+      required: ["query"],
+    },
+  },
+};
 
 class LlmService {
   private readonly client?: OpenAI;
@@ -24,8 +43,11 @@ class LlmService {
     }
   }
 
-  async generateResponse({ chatbot, messages, context, question }: ChatCompletionArgs) {
-    const contextInfo = context.length > 0
+  async generateResponse({ chatbot, messages, context, question, onToolCall }: ChatCompletionArgs) {
+    // Wenn kein onToolCall callback bereitgestellt wurde, fallback zum alten Verhalten
+    const useTools = !!onToolCall;
+
+    const contextInfo = !useTools && context.length > 0
       ? `\n\nHier sind relevante Informationen aus meiner Wissensbasis:\n${context.map((c, i) => `${c}`).join("\n\n")}`
       : "";
 
@@ -35,7 +57,9 @@ class LlmService {
       "",
       "Wichtige Regeln:",
       "- Antworte direkt und natürlich, als würdest du mit einem Freund sprechen",
-      "- Nutze die bereitgestellten Informationen aus der Wissensbasis, um präzise zu antworten",
+      useTools
+        ? "- Nutze das 'search_knowledge_base' Tool, um nach relevanten Informationen in der Wissensbasis zu suchen"
+        : "- Nutze die bereitgestellten Informationen aus der Wissensbasis, um präzise zu antworten",
       "- Antworte immer auf Deutsch in einem professionellen aber freundlichen Ton",
       "- Vermeide technische Formulierungen wie 'im bereitgestellten Kontext' oder 'laut den Informationen'",
       "- Wenn du etwas nicht weißt, sage es ehrlich und unkompliziert",
@@ -51,9 +75,8 @@ class LlmService {
       return `(${chatbot.name}) Ich habe deine Frage verstanden: "${question}".\n\nKontextauszug: ${snippet || "Kein Kontext verfügbar."}`;
     }
 
-    // Convert messages to new Responses API format
-    const inputMessages: Array<{ role: "developer" | "user" | "assistant"; content: string }> = [
-      { role: "developer", content: developerInstructions },
+    const inputMessages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+      { role: "system", content: developerInstructions },
     ];
 
     // Add conversation history
@@ -68,18 +91,72 @@ class LlmService {
     // Add current question
     inputMessages.push({ role: "user", content: question });
 
-    // Use Chat Completions API with GPT-5.1 (without reasoning.effort parameter)
-    const completion = await this.client.chat.completions.create({
+    // Use Chat Completions API with GPT-5.1
+    const completionParams: any = {
       model: chatbot.model || env.OPENAI_COMPLETIONS_MODEL,
-      messages: inputMessages.map(msg => ({
-        role: msg.role === "developer" ? "system" : msg.role,
-        content: msg.content,
-      })),
+      messages: inputMessages,
       max_tokens: 1000,
       stream: false,
-    });
+    };
 
-    return completion.choices[0]?.message?.content?.trim() ?? "Ich konnte keine Antwort generieren.";
+    if (useTools) {
+      completionParams.tools = [SEARCH_KNOWLEDGE_BASE_TOOL];
+      completionParams.tool_choice = "auto";
+    }
+
+    const completion = await this.client.chat.completions.create(completionParams);
+
+    const choice = completion.choices[0];
+    if (!choice) {
+      return "Ich konnte keine Antwort generieren.";
+    }
+
+    // Handle tool calls
+    if (choice.message.tool_calls && choice.message.tool_calls.length > 0 && onToolCall) {
+      const toolCall = choice.message.tool_calls[0];
+
+      // Type guard for function tool call
+      if (toolCall && "function" in toolCall && toolCall.function.name === "search_knowledge_base") {
+        const args = JSON.parse(toolCall.function.arguments);
+        logger.info(`LLM ruft Tool auf: search_knowledge_base mit Query: "${args.query}"`);
+
+        // Execute the tool
+        const searchResults = await onToolCall(args.query);
+
+        // Add assistant's tool call message (proper format for OpenAI)
+        inputMessages.push({
+          role: "assistant",
+          content: choice.message.content || null,
+          tool_calls: [{
+            id: toolCall.id,
+            type: "function",
+            function: {
+              name: toolCall.function.name,
+              arguments: toolCall.function.arguments,
+            },
+          }],
+        } as any);
+
+        // Add tool result message (proper format for OpenAI)
+        inputMessages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: `Suchergebnisse:\n\n${searchResults.join("\n\n")}`,
+        } as any);
+
+        // Make second API call with tool results
+        const secondCompletion = await this.client.chat.completions.create({
+          model: chatbot.model || env.OPENAI_COMPLETIONS_MODEL,
+          messages: inputMessages,
+          max_tokens: 1000,
+          stream: false,
+        });
+
+        return secondCompletion.choices[0]?.message?.content?.trim() ?? "Ich konnte keine Antwort generieren.";
+      }
+    }
+
+    return choice.message.content?.trim() ?? "Ich konnte keine Antwort generieren.";
   }
 }
 
