@@ -21,6 +21,8 @@ COPY --from=builder /app/package*.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY prisma ./prisma
+COPY start.sh ./
+RUN chmod +x start.sh
 ENV PORT=4000
 EXPOSE 4000
-CMD ["node", "dist/index.js"]
+CMD ["./start.sh"]
