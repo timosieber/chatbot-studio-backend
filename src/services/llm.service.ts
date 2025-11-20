@@ -63,7 +63,7 @@ class LlmService {
       "- Beantworte nur die gestellte Frage - keine zusätzlichen Informationen",
       "- Antworte direkt und natürlich, als würde ein Mitarbeiter des Unternehmens mit einem Kunden sprechen",
       useTools
-        ? "- Nutze das 'search_knowledge_base' Tool, um nach relevanten Informationen in der Wissensbasis zu suchen"
+        ? "- WICHTIG: Nutze IMMER das 'search_knowledge_base' Tool bei Fragen zu Produkten, Services oder wenn du unsicher bist"
         : "- Nutze die bereitgestellten Informationen aus der Wissensbasis, um präzise zu antworten",
       "- Antworte immer auf Deutsch in einem professionellen aber freundlichen Ton",
       "- Vermeide technische Formulierungen wie 'im bereitgestellten Kontext' oder 'laut den Informationen'",
@@ -105,7 +105,19 @@ class LlmService {
 
     if (useTools) {
       completionParams.tools = [SEARCH_KNOWLEDGE_BASE_TOOL];
-      completionParams.tool_choice = "auto";
+      // Force tool usage for product/service questions
+      const shouldForceToolUse =
+        question.toLowerCase().includes("was macht") ||
+        question.toLowerCase().includes("was bietet") ||
+        question.toLowerCase().includes("funktionen") ||
+        question.toLowerCase().includes("produkt") ||
+        question.toLowerCase().includes("service") ||
+        question.toLowerCase().includes("lösung") ||
+        question.toLowerCase().includes("allgemein");
+
+      completionParams.tool_choice = shouldForceToolUse
+        ? {"type": "function", "function": {"name": "search_knowledge_base"}}
+        : "auto";
     }
 
     const completion = await this.client.chat.completions.create(completionParams);
