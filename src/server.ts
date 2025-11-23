@@ -5,6 +5,7 @@ import morgan from "morgan";
 import type { Express, Request, Response, NextFunction } from "express";
 import { env } from "./config/env.js";
 import { chatService } from "./services/chat.service.js";
+import { knowledgeService } from "./services/knowledge.service.js";
 import { apiRateLimiter } from "./middleware/rate-limit.js";
 import { errorHandler } from "./middleware/error-handler.js";
 
@@ -105,6 +106,47 @@ export const buildServer = (): Express => {
       });
     } catch (error) {
       return next(error);
+    }
+  });
+
+  // Knowledge routes (legacy friendly)
+  app.get("/api/knowledge/sources", async (_req, res, next) => {
+    try {
+      const sources = await knowledgeService.listSources().catch(() => []);
+      res.json(sources ?? []);
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  app.post("/api/knowledge/sources/scrape", async (req, res, next) => {
+    try {
+      const url = req.body?.url;
+      if (!url) return res.status(400).json({ error: "url ist erforderlich" });
+      await knowledgeService.scrapeAndIngest(url as string, "default-bot", { startUrls: [url] });
+      res.json({ success: true });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  app.post("/api/knowledge/sources/text", async (req, res, next) => {
+    try {
+      const { title, content } = req.body || {};
+      if (!title || !content) return res.status(400).json({ error: "title und content sind erforderlich" });
+      await knowledgeService.addTextSource(title, content);
+      res.status(201).json({ success: true });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  app.delete("/api/knowledge/sources/:id", async (req, res, next) => {
+    try {
+      await knowledgeService.deleteSource(req.params.id);
+      res.status(204).send();
+    } catch (err) {
+      next(err);
     }
   });
 
