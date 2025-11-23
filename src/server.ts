@@ -247,7 +247,12 @@ export const buildServer = (): Express => {
 
   app.post("/api/chat/messages", async (req, res, next) => {
     try {
-      const chatbotId = req.body?.chatbotId || (req.query?.chatbotId as string);
+      let chatbotId = req.body?.chatbotId || (req.query?.chatbotId as string);
+      // Fallback: aus Session ableiten
+      if (!chatbotId && req.body?.sessionId) {
+        const session = await prisma.session.findUnique({ where: { id: req.body.sessionId } });
+        chatbotId = session?.chatbotId;
+      }
       if (!chatbotId) return res.status(400).json({ error: "chatbotId required" });
       const bot = await getBot(chatbotId);
       if (!bot) return res.status(404).json({ error: "Chatbot nicht gefunden" });
