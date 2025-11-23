@@ -122,7 +122,8 @@ export const buildServer = (): Express => {
   app.post("/api/knowledge/sources/scrape", async (req, res, next) => {
     try {
       console.log("Scrape Request empfangen. Body:", req.body);
-      const url = req.body?.url;
+      const body = req.body || {};
+      const url = body.url || body.link || (Array.isArray(body.startUrls) ? body.startUrls[0] : null);
       if (!url) {
         console.error("URL fehlt!");
         return res.status(400).json({ error: "URL is required" });
