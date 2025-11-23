@@ -69,6 +69,11 @@ export const buildServer = (): Express => {
     return created.id;
   };
 
+  const getBot = async (chatbotId: string) => {
+    const bot = await prisma.chatbot.findUnique({ where: { id: chatbotId } });
+    return bot;
+  };
+
   app.get("/api/chatbots", async (_req, res) => {
     try {
       const bots = await prisma.chatbot.findMany({ orderBy: { createdAt: "desc" } });
@@ -223,7 +228,11 @@ export const buildServer = (): Express => {
 
   // Minimal chat session/messages endpoints for widget compatibility
   app.post("/api/chat/sessions", async (req, res) => {
-    const chatbotId = req.body?.chatbotId || (req.query?.chatbotId as string) || "default-bot";
+    const chatbotId = req.body?.chatbotId || (req.query?.chatbotId as string);
+    if (!chatbotId) return res.status(400).json({ error: "chatbotId required" });
+    const bot = await getBot(chatbotId);
+    if (!bot) return res.status(404).json({ error: "Chatbot nicht gefunden" });
+    if (bot.status !== "ACTIVE") return res.status(503).json({ error: "Chatbot wird vorbereitet" });
     const sessionId = randomUUID();
     const token = randomUUID();
     const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
@@ -232,7 +241,11 @@ export const buildServer = (): Express => {
 
   app.post("/api/chat/messages", async (req, res, next) => {
     try {
-      const chatbotId = req.body?.chatbotId || (req.query?.chatbotId as string) || "default-bot";
+      const chatbotId = req.body?.chatbotId || (req.query?.chatbotId as string);
+      if (!chatbotId) return res.status(400).json({ error: "chatbotId required" });
+      const bot = await getBot(chatbotId);
+      if (!bot) return res.status(404).json({ error: "Chatbot nicht gefunden" });
+      if (bot.status !== "ACTIVE") return res.status(503).json({ error: "Chatbot wird vorbereitet" });
       const message = req.body?.message || req.body?.question || req.body?.prompt;
       if (!message) return res.status(400).json({ error: "message is required" });
 
