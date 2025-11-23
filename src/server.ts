@@ -121,11 +121,16 @@ export const buildServer = (): Express => {
 
   app.post("/api/knowledge/sources/scrape", async (req, res, next) => {
     try {
+      console.log("Scrape Request empfangen. Body:", req.body);
       const url = req.body?.url;
-      if (!url) return res.status(400).json({ error: "url ist erforderlich" });
-      await knowledgeService.scrapeAndIngest(url as string, "default-bot", { startUrls: [url] });
+      if (!url) {
+        console.error("URL fehlt!");
+        return res.status(400).json({ error: "URL is required" });
+      }
+      await knowledgeService.scrapeAndIngest(url as string);
       res.json({ success: true });
     } catch (err) {
+      console.error("ScrapeAndIngest Fehler:", err);
       next(err);
     }
   });
