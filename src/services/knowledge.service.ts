@@ -101,6 +101,7 @@ export class KnowledgeService {
     if (!opts.startUrls || !opts.startUrls.length) {
       throw new Error("URL fehlt für scrapeAndIngest");
     }
+    const firstUrl = opts.startUrls[0] ?? "unknown-url";
 
     const pages: DatasetItem[] = await scraperRunner.run(opts);
     let ingested = 0;
@@ -125,18 +126,18 @@ export class KnowledgeService {
 
     if (!ingested) {
       await this.processIngestion({
-        content: `# ${opts.startUrls[0]}\n\nKeine verwertbaren Inhalte gefunden.`,
+        content: `# ${firstUrl}\n\nKeine verwertbaren Inhalte gefunden.`,
         metadata: {
           chatbotId: _chatbotId || "default-bot",
-          title: opts.startUrls[0],
-          sourceUrl: opts.startUrls[0],
+          title: firstUrl,
+          sourceUrl: firstUrl,
           type: "web",
         },
       });
       ingested = 1;
     }
 
-    return { sources: [{ id: "scrape", label: opts.startUrls[0], chunks: ingested }], pagesScanned: pages.length };
+    return { sources: [{ id: "scrape", label: firstUrl, chunks: ingested }], pagesScanned: pages.length };
   }
 
   private async summarizeChunks(chunks: string[], title: string): Promise<EnrichedChunk[]> {
