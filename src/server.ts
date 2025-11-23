@@ -89,8 +89,8 @@ export const buildServer = (): Express => {
           name,
           description: req.body?.description ?? null,
           allowedDomains: Array.isArray(req.body?.allowedDomains) ? req.body.allowedDomains : [],
-          model: req.body?.model || "gpt-4o",
-          status: req.body?.status || "ACTIVE",
+          model: req.body?.model || env.OPENAI_COMPLETIONS_MODEL || "gpt-5.1",
+          status: req.body?.status || "DRAFT",
         },
       });
       res.status(201).json(makeBot(bot));
@@ -156,9 +156,10 @@ export const buildServer = (): Express => {
   });
 
   // Knowledge routes (legacy friendly)
-  app.get("/api/knowledge/sources", async (_req, res, next) => {
+  app.get("/api/knowledge/sources", async (req, res, next) => {
     try {
-      const sources = await knowledgeService.listSources().catch(() => []);
+      const chatbotId = (req.query?.chatbotId as string) || undefined;
+      const sources = await knowledgeService.listSources(undefined, chatbotId).catch(() => []);
       res.json(sources ?? []);
     } catch (err) {
       next(err);
@@ -187,6 +188,12 @@ export const buildServer = (): Express => {
         allowFullDownload: body.allowFullDownload,
       };
       await knowledgeService.scrapeAndIngest("system", chatbotId, options);
+      // Mark chatbot as ACTIVE when ingestion succeeds
+      try {
+        await prisma.chatbot.update({ where: { id: chatbotId }, data: { status: "ACTIVE" } });
+      } catch (err) {
+        console.error("Could not update chatbot status after scrape", err);
+      }
       res.json({ success: true });
     } catch (err) {
       console.error("ScrapeAndIngest Fehler:", err);

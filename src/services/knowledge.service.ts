@@ -6,6 +6,7 @@ import { getVectorStore } from "./vector-store/index.js";
 import { scraperRunner } from "./scraper/index.js";
 import type { ScrapeOptions, DatasetItem } from "./scraper/types.js";
 import { prisma } from "../lib/prisma.js";
+import { promptGeneratorService } from "./prompt-generator.service.js";
 
 export interface IngestionInput {
   content: string; // Markdown
@@ -76,6 +77,7 @@ export class KnowledgeService {
     return prisma.knowledgeSource.findMany({
       where: { chatbotId: _chatbotId },
       orderBy: { createdAt: "desc" },
+      include: { embeddings: true },
     });
   }
 
@@ -128,6 +130,17 @@ export class KnowledgeService {
 
     const pages: DatasetItem[] = await scraperRunner.run(opts);
     let ingested = 0;
+
+    // Versuche System Prompt aus gescrapten Seiten zu generieren
+    try {
+      const generatedPrompt = await promptGeneratorService.generateSystemPrompt(pages as any);
+      await prisma.chatbot.update({
+        where: { id: _chatbotId },
+        data: { systemPrompt: generatedPrompt },
+      });
+    } catch (err) {
+      console.error("System Prompt Generierung fehlgeschlagen", err);
+    }
 
     for (const page of pages) {
       const title = page.title || page.canonical_url || page.page_url;
