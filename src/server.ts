@@ -168,7 +168,18 @@ export const buildServer = (): Express => {
         console.error("URL fehlt!");
         return res.status(400).json({ error: "URL is required" });
       }
-      await knowledgeService.scrapeAndIngest("system", chatbotId, { startUrls: [url] });
+      const options = {
+        startUrls: Array.isArray(body.startUrls) && body.startUrls.length ? body.startUrls : [url],
+        maxDepth: body.maxDepth,
+        maxPages: body.maxPages,
+        respectRobotsTxt: body.respectRobotsTxt,
+        includeGlobs: body.includeGlobs,
+        excludeGlobs: body.excludeGlobs,
+        maxConcurrency: body.maxConcurrency,
+        rateLimitPerHost: body.rateLimitPerHost,
+        allowFullDownload: body.allowFullDownload,
+      };
+      await knowledgeService.scrapeAndIngest("system", chatbotId, options);
       res.json({ success: true });
     } catch (err) {
       console.error("ScrapeAndIngest Fehler:", err);

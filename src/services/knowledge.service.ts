@@ -3,6 +3,8 @@ import { RecursiveCharacterTextSplitter } from "langchain/text_splitter";
 import { ChatOpenAI, OpenAIEmbeddings } from "@langchain/openai";
 import { env } from "../config/env.js";
 import { getVectorStore } from "./vector-store/index.js";
+import { scraperRunner } from "./scraper/index.js";
+import type { ScrapeOptions, DatasetItem } from "./scraper/types.js";
 
 export interface IngestionInput {
   content: string; // Markdown
@@ -91,20 +93,50 @@ export class KnowledgeService {
   }
 
   async scrapeAndIngest(_userId: string, _chatbotId: string, scrapeOptionsOrUrl: any) {
-    const url = typeof scrapeOptionsOrUrl === "string" ? scrapeOptionsOrUrl : scrapeOptionsOrUrl?.startUrls?.[0];
-    if (!url) throw new Error("URL fehlt für scrapeAndIngest");
+    const opts: ScrapeOptions =
+      typeof scrapeOptionsOrUrl === "string"
+        ? { startUrls: [scrapeOptionsOrUrl] }
+        : scrapeOptionsOrUrl || {};
 
-    // Legacy stub: no local scraper in this package
-    await this.processIngestion({
-      content: `# ${url}\n\nInhalt wurde nicht gescraped (Stub).`,
-      metadata: {
-        title: url,
-        sourceUrl: url,
-        type: "web",
-        chatbotId: _chatbotId || "default-bot",
-      },
-    });
-    return { sources: [{ id: "legacy", label: url, chunks: 1 }], pagesScanned: 1 };
+    if (!opts.startUrls || !opts.startUrls.length) {
+      throw new Error("URL fehlt für scrapeAndIngest");
+    }
+
+    const pages: DatasetItem[] = await scraperRunner.run(opts);
+    let ingested = 0;
+
+    for (const page of pages) {
+      const title = page.title || page.canonical_url || page.page_url;
+      const markdown = `# ${title}\n\n${page.main_text || ""}`;
+      if (!markdown.trim()) continue;
+
+      await this.processIngestion({
+        content: markdown,
+        metadata: {
+          chatbotId: _chatbotId || "default-bot",
+          title,
+          sourceUrl: page.canonical_url || page.page_url,
+          datePublished: page.fetched_at,
+          type: "web",
+        },
+      });
+      ingested += 1;
+    }
+
+    if (!ingested) {
+      await this.processIngestion({
+        content: `# ${opts.startUrls[0]}\n\nKeine verwertbaren Inhalte gefunden.`,
+        metadata: {
+          chatbotId: _chatbotId || "default-bot",
+          title: opts.startUrls[0],
+          sourceUrl: opts.startUrls[0],
+          type: "web",
+        },
+      });
+      ingested = 1;
+    }
+
+    return { sources: [{ id: "scrape", label: opts.startUrls[0], chunks: ingested }], pagesScanned: pages.length };
   }
 
   private async summarizeChunks(chunks: string[], title: string): Promise<EnrichedChunk[]> {
