@@ -62,7 +62,7 @@ export const buildServer = (): Express => {
   });
   const defaultBot = makeBot();
 
-  app.get("/api/chatbots", (_req, res) => {
+  app.get("/api/chatbots", async (_req, res) => {
     try {
       const bots = await prisma.chatbot.findMany({ orderBy: { createdAt: "desc" } });
       if (!bots.length) return res.json([makeBot()]);
