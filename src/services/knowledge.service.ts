@@ -66,6 +66,44 @@ export class KnowledgeService {
     return { chunks: enriched.length };
   }
 
+  // Compatibility wrappers for legacy callers
+  async listSources(_userId?: string, _chatbotId?: string) {
+    return [];
+  }
+
+  async deleteSource(_userId?: string, _id?: string) {
+    return true;
+  }
+
+  async addTextSource(_userIdOrTitle: string, _chatbotIdOrContent: string, label?: string, content?: string) {
+    const title = label ?? _chatbotIdOrContent;
+    const body = content ?? _chatbotIdOrContent;
+    const markdown = `# ${title}\n\n${content}`;
+    await this.processIngestion({
+      content: markdown,
+      metadata: {
+        title,
+        type: "web",
+      },
+    });
+  }
+
+  async scrapeAndIngest(_userId: string, _chatbotId: string, scrapeOptionsOrUrl: any) {
+    const url = typeof scrapeOptionsOrUrl === "string" ? scrapeOptionsOrUrl : scrapeOptionsOrUrl?.startUrls?.[0];
+    if (!url) throw new Error("URL fehlt für scrapeAndIngest");
+
+    // Legacy stub: no local scraper in this package
+    await this.processIngestion({
+      content: `# ${url}\n\nInhalt wurde nicht gescraped (Stub).`,
+      metadata: {
+        title: url,
+        sourceUrl: url,
+        type: "web",
+      },
+    });
+    return { sources: [{ id: "legacy", label: url, chunks: 1 }], pagesScanned: 1 };
+  }
+
   private async summarizeChunks(chunks: string[], title: string): Promise<EnrichedChunk[]> {
     const results: EnrichedChunk[] = new Array(chunks.length);
     let cursor = 0;

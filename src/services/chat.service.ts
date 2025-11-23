@@ -177,7 +177,12 @@ export class ChatService {
   private async rerank(query: string, docs: Array<{ id: string; content: string; metadata: Record<string, any>; score: number }>): Promise<RankedContext[]> {
     if (!docs.length) return [];
     if (USE_MOCK_LLM || !env.OPENAI_API_KEY) {
-      return docs.slice(0, 5);
+      return docs.slice(0, 5).map((d, i) => ({
+        id: d.id || `unknown-${i}`,
+        content: d.content,
+        metadata: d.metadata,
+        score: d.score,
+      }));
     }
     try {
       const prompt = RERANK_PROMPT(query, docs.map((d) => ({ ...d })));
@@ -194,14 +199,26 @@ export class ChatService {
 
       if (!ids.length) return docs.slice(0, 5);
 
-      const ordered = ids
-        .map((idx) => docs[idx - 1])
-        .filter(Boolean)
-        .map((d, i) => ({ ...d, score: docs.length - i }));
+      const ordered: RankedContext[] = [];
+      ids.forEach((idx, i) => {
+        const d = docs[idx - 1];
+        if (!d) return;
+        ordered.push({
+          id: d.id || `unknown-${Math.random().toString(36).substring(7)}`,
+          content: d.content,
+          metadata: d.metadata,
+          score: docs.length - i,
+        });
+      });
 
       return ordered;
     } catch {
-      return docs;
+      return docs.map((d, i) => ({
+        id: d.id || `unknown-${Math.random().toString(36).substring(7)}`,
+        content: d.content,
+        metadata: d.metadata,
+        score: d.score ?? docs.length - i,
+      }));
     }
   }
 

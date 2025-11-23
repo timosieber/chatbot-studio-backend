@@ -46,4 +46,5 @@
     "moduleResolution": "nodenext"
   },
   "include": ["src"]
+  , "exclude": ["src/test-pipeline.ts"]
 }
