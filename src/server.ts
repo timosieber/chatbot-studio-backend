@@ -44,18 +44,41 @@ export const buildServer = (): Express => {
 
   app.use("/api", apiRateLimiter);
 
-  const defaultBot = { id: "default-bot", name: "RAG Assistant", model: "gpt-4o" };
+  const makeBot = (id = "default-bot", name = "RAG Assistant") => ({
+    id,
+    userId: "system",
+    name,
+    description: "Default RAG Assistant",
+    systemPrompt: null,
+    logoUrl: null,
+    allowedDomains: [],
+    theme: null,
+    model: "gpt-4o",
+    status: "ACTIVE" as const,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  const defaultBot = makeBot();
 
   app.get("/api/chatbots", (_req, res) => {
-    res.json([defaultBot]);
+    res.json([makeBot()]);
   });
 
   app.post("/api/chatbots", (_req, res) => {
-    res.status(201).json({ id: defaultBot.id, name: defaultBot.name });
+    res.status(201).json(makeBot());
   });
 
   app.get("/api/chatbots/:id", (_req, res) => {
-    res.json(defaultBot);
+    res.json(makeBot());
+  });
+
+  app.patch("/api/chatbots/:id", (req, res) => {
+    const name = req.body?.name || defaultBot.name;
+    res.json(makeBot(req.params.id || defaultBot.id, name));
+  });
+
+  app.delete("/api/chatbots/:id", (_req, res) => {
+    res.status(204).send();
   });
 
   app.post("/api/chat", async (req: Request, res: Response, next: NextFunction) => {
