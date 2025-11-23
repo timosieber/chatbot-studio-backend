@@ -85,6 +85,7 @@ export class KnowledgeService {
       metadata: {
         title,
         type: "web",
+        chatbotId: typeof _chatbotIdOrContent === "string" ? _chatbotIdOrContent : "default-bot",
       },
     });
   }
@@ -100,6 +101,7 @@ export class KnowledgeService {
         title: url,
         sourceUrl: url,
         type: "web",
+        chatbotId: _chatbotId || "default-bot",
       },
     });
     return { sources: [{ id: "legacy", label: url, chunks: 1 }], pagesScanned: 1 };

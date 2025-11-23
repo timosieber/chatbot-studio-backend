@@ -8,6 +8,7 @@ import { chatService } from "./services/chat.service.js";
 import { knowledgeService } from "./services/knowledge.service.js";
 import { apiRateLimiter } from "./middleware/rate-limit.js";
 import { errorHandler } from "./middleware/error-handler.js";
+import { prisma } from "./lib/prisma.js";
 
 const LOCALHOST_PORTS = ["3000", "4200", "5173", "8080"];
 const DEFAULT_CHATBOT_ID = "default-bot";
@@ -45,37 +46,68 @@ export const buildServer = (): Express => {
 
   app.use("/api", apiRateLimiter);
 
-  const makeBot = (id = "default-bot", name = "RAG Assistant") => ({
-    id,
-    userId: "system",
-    name,
-    description: "Default RAG Assistant",
-    systemPrompt: null,
-    logoUrl: null,
-    allowedDomains: [],
-    theme: null,
-    model: "gpt-4o",
-    status: "ACTIVE" as const,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+  const makeBot = (bot?: any) => ({
+    id: bot?.id ?? "default-bot",
+    userId: bot?.userId ?? "system",
+    name: bot?.name ?? "RAG Assistant",
+    description: bot?.description ?? "Default RAG Assistant",
+    systemPrompt: bot?.systemPrompt ?? null,
+    logoUrl: bot?.logoUrl ?? null,
+    allowedDomains: bot?.allowedDomains ?? [],
+    theme: bot?.theme ?? null,
+    model: bot?.model ?? "gpt-4o",
+    status: (bot?.status as any) ?? "ACTIVE",
+    createdAt: bot?.createdAt ?? new Date().toISOString(),
+    updatedAt: bot?.updatedAt ?? new Date().toISOString(),
   });
   const defaultBot = makeBot();
 
   app.get("/api/chatbots", (_req, res) => {
-    res.json([makeBot()]);
+    try {
+      const bots = await prisma.chatbot.findMany({ orderBy: { createdAt: "desc" } });
+      if (!bots.length) return res.json([makeBot()]);
+      return res.json(bots.map(makeBot));
+    } catch (err) {
+      console.error("GET /api/chatbots error:", err);
+      return res.json([makeBot()]);
+    }
   });
 
-  app.post("/api/chatbots", (_req, res) => {
-    res.status(201).json(makeBot());
+  app.post("/api/chatbots", async (req, res) => {
+    try {
+      const name = req.body?.name || "RAG Assistant";
+      const userId = req.body?.userId || "system";
+      const bot = await prisma.chatbot.create({
+        data: {
+          userId,
+          name,
+          description: req.body?.description ?? null,
+          allowedDomains: Array.isArray(req.body?.allowedDomains) ? req.body.allowedDomains : [],
+          model: req.body?.model || "gpt-4o",
+          status: req.body?.status || "ACTIVE",
+        },
+      });
+      res.status(201).json(makeBot(bot));
+    } catch (err) {
+      console.error("POST /api/chatbots error:", err);
+      res.status(201).json(makeBot());
+    }
   });
 
-  app.get("/api/chatbots/:id", (_req, res) => {
-    res.json(makeBot());
+  app.get("/api/chatbots/:id", async (req, res) => {
+    try {
+      const bot = await prisma.chatbot.findUnique({ where: { id: req.params.id } });
+      if (!bot) return res.json(makeBot({ id: req.params.id }));
+      return res.json(makeBot(bot));
+    } catch (err) {
+      console.error("GET /api/chatbots/:id error:", err);
+      return res.json(makeBot({ id: req.params.id }));
+    }
   });
 
   app.patch("/api/chatbots/:id", (req, res) => {
     const name = req.body?.name || defaultBot.name;
-    res.json(makeBot(req.params.id || defaultBot.id, name));
+    res.json(makeBot({ id: req.params.id || defaultBot.id, name }));
   });
 
   app.delete("/api/chatbots/:id", (_req, res) => {
@@ -124,11 +156,12 @@ export const buildServer = (): Express => {
       console.log("Scrape Request empfangen. Body:", req.body);
       const body = req.body || {};
       const url = body.url || body.link || (Array.isArray(body.startUrls) ? body.startUrls[0] : null);
+      const chatbotId = body.chatbotId || "default-bot";
       if (!url) {
         console.error("URL fehlt!");
         return res.status(400).json({ error: "URL is required" });
       }
-      await knowledgeService.scrapeAndIngest("system", "default-bot", { startUrls: [url] });
+      await knowledgeService.scrapeAndIngest("system", chatbotId, { startUrls: [url] });
       res.json({ success: true });
     } catch (err) {
       console.error("ScrapeAndIngest Fehler:", err);
