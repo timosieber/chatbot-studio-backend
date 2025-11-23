@@ -44,6 +44,20 @@ export const buildServer = (): Express => {
 
   app.use("/api", apiRateLimiter);
 
+  const defaultBot = { id: "default-bot", name: "RAG Assistant", model: "gpt-4o" };
+
+  app.get("/api/chatbots", (_req, res) => {
+    res.json([defaultBot]);
+  });
+
+  app.post("/api/chatbots", (_req, res) => {
+    res.status(201).json({ id: defaultBot.id, name: defaultBot.name });
+  });
+
+  app.get("/api/chatbots/:id", (_req, res) => {
+    res.json(defaultBot);
+  });
+
   app.post("/api/chat", async (req: Request, res: Response, next: NextFunction) => {
     console.log("Received body:", req.body);
     try {
