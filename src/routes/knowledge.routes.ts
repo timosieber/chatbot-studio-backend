@@ -76,6 +76,7 @@ router.post("/sources/scrape", async (req, res, next) => {
       .scrapeAndIngest(req.user!.id, payload.chatbotId, scrapeOptions)
       .then(async () => {
         await prisma.knowledgeSource.update({ where: { id: pendingSource.id }, data: { status: "READY" } });
+        await prisma.chatbot.update({ where: { id: payload.chatbotId }, data: { status: "ACTIVE" } });
       })
       .catch(async (err) => {
         await prisma.knowledgeSource.update({ where: { id: pendingSource.id }, data: { status: "FAILED" } });
