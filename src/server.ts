@@ -116,9 +116,9 @@ export const buildServer = (): Express => {
       const chatbotId = req.params.id;
       if (!chatbotId) return res.status(400).json({ error: "chatbotId required" });
 
-      const bot = await prisma.chatbot.findUnique({ where: { id: chatbotId } });
+      const { allowed, bot } = await checkChatbotOwnership(chatbotId, req.user!.id);
       if (!bot) return res.status(404).json({ error: "Chatbot nicht gefunden" });
-      if (bot.userId !== req.user!.id) return res.status(403).json({ error: "Zugriff verweigert" });
+      if (!allowed) return res.status(403).json({ error: "Zugriff verweigert" });
       return res.json(makeBot(bot));
     } catch (err) {
       console.error("GET /api/chatbots/:id error:", err);
@@ -131,9 +131,9 @@ export const buildServer = (): Express => {
       const chatbotId = req.params.id;
       if (!chatbotId) return res.status(400).json({ error: "chatbotId required" });
 
-      const existing = await prisma.chatbot.findUnique({ where: { id: chatbotId } });
+      const { allowed, bot: existing } = await checkChatbotOwnership(chatbotId, req.user!.id);
       if (!existing) return res.status(404).json({ error: "Chatbot nicht gefunden" });
-      if (existing.userId !== req.user!.id) return res.status(403).json({ error: "Zugriff verweigert" });
+      if (!allowed) return res.status(403).json({ error: "Zugriff verweigert" });
 
       const updateData: Record<string, unknown> = {};
       if (req.body?.name !== undefined) updateData.name = req.body.name;
@@ -162,9 +162,9 @@ export const buildServer = (): Express => {
     if (!chatbotId) return res.status(400).json({ error: "chatbotId required" });
 
     try {
-      const existing = await prisma.chatbot.findUnique({ where: { id: chatbotId } });
+      const { allowed, bot: existing } = await checkChatbotOwnership(chatbotId, req.user!.id);
       if (!existing) return res.status(404).json({ error: "Chatbot nicht gefunden" });
-      if (existing.userId !== req.user!.id) return res.status(403).json({ error: "Zugriff verweigert" });
+      if (!allowed) return res.status(403).json({ error: "Zugriff verweigert" });
 
       await knowledgeService.purgeChatbotVectors(chatbotId);
       await prisma.chatbot.delete({ where: { id: chatbotId } });
@@ -202,14 +202,32 @@ export const buildServer = (): Express => {
     }
   });
 
+  // Helper: Prüft Chatbot-Ownership und migriert legacy Chatbots
+  const checkChatbotOwnership = async (chatbotId: string, userId: string): Promise<{ allowed: boolean; bot: any }> => {
+    const bot = await prisma.chatbot.findUnique({ where: { id: chatbotId } });
+    if (!bot) return { allowed: false, bot: null };
+
+    // Legacy-Migration: Wenn der Chatbot einem "system" User gehört, übernimm ihn
+    if (bot.userId !== userId) {
+      const ownerExists = await prisma.user.findUnique({ where: { id: bot.userId } });
+      if (!ownerExists || bot.userId.startsWith("system") || bot.userId === "system") {
+        // Migriere den Chatbot zum aktuellen User
+        await prisma.chatbot.update({ where: { id: chatbotId }, data: { userId } });
+        return { allowed: true, bot: { ...bot, userId } };
+      }
+      return { allowed: false, bot };
+    }
+
+    return { allowed: true, bot };
+  };
+
   // Knowledge routes (protected)
   app.get("/api/knowledge/sources", requireDashboardAuth, async (req, res, next) => {
     try {
       const chatbotId = (req.query?.chatbotId as string) || undefined;
       if (chatbotId) {
-        // Prüfe ob der User Zugriff auf diesen Chatbot hat
-        const bot = await prisma.chatbot.findUnique({ where: { id: chatbotId } });
-        if (!bot || bot.userId !== req.user!.id) {
+        const { allowed } = await checkChatbotOwnership(chatbotId, req.user!.id);
+        if (!allowed) {
           return res.status(403).json({ error: "Zugriff verweigert" });
         }
       }
@@ -232,9 +250,9 @@ export const buildServer = (): Express => {
         return res.status(400).json({ error: "chatbotId is required" });
       }
 
-      // Prüfe ob der User Zugriff auf diesen Chatbot hat
-      const bot = await prisma.chatbot.findUnique({ where: { id: chatbotId } });
-      if (!bot || bot.userId !== req.user!.id) {
+      // Prüfe ob der User Zugriff auf diesen Chatbot hat (mit Legacy-Migration)
+      const { allowed } = await checkChatbotOwnership(chatbotId, req.user!.id);
+      if (!allowed) {
         return res.status(403).json({ error: "Zugriff verweigert" });
       }
 
@@ -278,9 +296,9 @@ export const buildServer = (): Express => {
       if (!chatbotId) return res.status(400).json({ error: "chatbotId ist erforderlich" });
       if (!title || !content) return res.status(400).json({ error: "title und content sind erforderlich" });
 
-      // Prüfe ob der User Zugriff auf diesen Chatbot hat
-      const bot = await prisma.chatbot.findUnique({ where: { id: chatbotId } });
-      if (!bot || bot.userId !== req.user!.id) {
+      // Prüfe ob der User Zugriff auf diesen Chatbot hat (mit Legacy-Migration)
+      const { allowed } = await checkChatbotOwnership(chatbotId, req.user!.id);
+      if (!allowed) {
         return res.status(403).json({ error: "Zugriff verweigert" });
       }
 
@@ -296,12 +314,17 @@ export const buildServer = (): Express => {
       const sourceId = req.params.id;
       if (!sourceId) return res.status(400).json({ error: "source id required" });
 
-      // Prüfe ob der User Zugriff auf diese Source hat
+      // Prüfe ob der User Zugriff auf diese Source hat (mit Legacy-Migration)
       const source = await prisma.knowledgeSource.findUnique({
         where: { id: sourceId },
         include: { chatbot: true },
       });
-      if (!source || source.chatbot.userId !== req.user!.id) {
+      if (!source) {
+        return res.status(404).json({ error: "Source nicht gefunden" });
+      }
+
+      const { allowed } = await checkChatbotOwnership(source.chatbotId, req.user!.id);
+      if (!allowed) {
         return res.status(403).json({ error: "Zugriff verweigert" });
       }
 
