@@ -350,7 +350,7 @@ export const buildServer = (): Express => {
       const sessionId = req.body?.sessionId;
       const sessionToken = req.body?.token || req.headers.authorization?.replace("Bearer ", "");
 
-      // Session validieren
+      // Session validieren (optional - für Backward-Kompatibilität)
       let session = null;
       if (sessionId) {
         session = await prisma.session.findUnique({
@@ -358,17 +358,16 @@ export const buildServer = (): Express => {
           include: { chatbot: true },
         });
 
-        if (!session) {
-          return res.status(401).json({ error: "Session nicht gefunden" });
+        // Session gefunden - validiere nur wenn Token mitgeschickt wurde
+        if (session && sessionToken) {
+          if (session.token !== sessionToken) {
+            return res.status(401).json({ error: "Ungültiges Session-Token" });
+          }
+          if (new Date() > session.expiresAt) {
+            return res.status(401).json({ error: "Session abgelaufen" });
+          }
         }
-
-        if (session.token !== sessionToken) {
-          return res.status(401).json({ error: "Ungültiges Session-Token" });
-        }
-
-        if (new Date() > session.expiresAt) {
-          return res.status(401).json({ error: "Session abgelaufen" });
-        }
+        // Wenn Session nicht gefunden, ignorieren wir es und verwenden chatbotId aus Request
       }
 
       // chatbotId aus Session oder Request
