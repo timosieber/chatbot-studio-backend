@@ -6,6 +6,7 @@ import type { DatasetItem, ScrapeOptions } from "./types.js";
 
 // Fallback-Timeout für unsere eigene Anfrage (2 Stunden)
 const RUN_TIMEOUT_MS = 2 * 60 * 60 * 1000;
+const PAGE_SIZE = 50;
 
 const trimTrailingSlashes = (url: string) => url.replace(/\/+$/, "");
 
@@ -36,6 +37,8 @@ export class ApifyScraperRunner {
     requestUrl.searchParams.set("token", config.token);
     requestUrl.searchParams.set("format", "json");
     requestUrl.searchParams.set("clean", "1");
+    requestUrl.searchParams.set("limit", String(PAGE_SIZE));
+    requestUrl.searchParams.set("offset", "0");
     // Apify beendet run-sync standardmäßig nach ~5 Minuten; wir warten bis zu 2 Stunden
     requestUrl.searchParams.set("timeout", (2 * 60 * 60).toString());
 
@@ -44,29 +47,42 @@ export class ApifyScraperRunner {
 
     try {
       logger.info({ actor: config.actorId }, "Apify Scraper gestartet");
-      const response = await fetch(requestUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(inputPayload),
-        signal: controller.signal,
-      });
+      const datasetItems: DatasetItem[] = [];
+      let offset = 0;
 
-      if (!response.ok) {
-        const errorBody = await response.text();
-        logger.error(
-          { actor: config.actorId, statusCode: response.status, body: errorBody },
-          "Apify Scraper schlug fehl",
-        );
-        throw new ServiceUnavailableError(`Apify Scraper antwortete mit Status ${response.status}`);
+      while (true) {
+        requestUrl.searchParams.set("offset", String(offset));
+
+        const response = await fetch(requestUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(inputPayload),
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          const errorBody = await response.text();
+          logger.error(
+            { actor: config.actorId, statusCode: response.status, offset, limit: PAGE_SIZE, body: errorBody },
+            "Apify Scraper schlug fehl",
+          );
+          throw new ServiceUnavailableError(`Apify Scraper antwortete mit Status ${response.status}`);
+        }
+
+        const json = (await response.json()) as unknown;
+        if (!Array.isArray(json)) {
+          logger.warn({ actor: config.actorId, offset, limit: PAGE_SIZE, response: json }, "Apify Scraper lieferte unerwartetes Format");
+          throw new ServiceUnavailableError("Apify Scraper lieferte keine Dataset-Liste");
+        }
+
+        const pages = json.filter((item): item is DatasetItem => item?.type === "page");
+        datasetItems.push(...pages);
+        logger.info({ actor: config.actorId, offset, limit: PAGE_SIZE, received: json.length, pages: pages.length }, "Apify Dataset Chunk geladen");
+
+        if (json.length < PAGE_SIZE) break;
+        offset += PAGE_SIZE;
       }
 
-      const json = (await response.json()) as unknown;
-      if (!Array.isArray(json)) {
-        logger.warn({ actor: config.actorId, response: json }, "Apify Scraper lieferte unerwartetes Format");
-        throw new ServiceUnavailableError("Apify Scraper lieferte keine Dataset-Liste");
-      }
-
-      const datasetItems = json.filter((item): item is DatasetItem => item?.type === "page");
       logger.info({ actor: config.actorId, pages: datasetItems.length }, "Apify Scraper erfolgreich abgeschlossen");
       return datasetItems;
     } catch (error) {

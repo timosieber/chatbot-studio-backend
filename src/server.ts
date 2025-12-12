@@ -326,15 +326,29 @@ export const buildServer = (): Express => {
 
       provisioningEventsService.publish(chatbotId, { type: "started", chatbotId });
 
+      // Create a PENDING placeholder so the dashboard shows progress immediately
+      const pendingSource = await prisma.knowledgeSource.create({
+        data: {
+          chatbotId,
+          label: options.startUrls[0] ?? "Scrape",
+          type: "URL",
+          status: "PENDING",
+          uri: options.startUrls[0] ?? null,
+          metadata: { startedAt: new Date().toISOString() },
+        },
+      });
+
       // fire-and-forget mit User-ID
       void knowledgeService
         .scrapeAndIngest(req.user!.id, chatbotId, options)
         .then(async () => {
+          await prisma.knowledgeSource.update({ where: { id: pendingSource.id }, data: { status: "READY" } }).catch(() => {});
           await prisma.chatbot.update({ where: { id: chatbotId }, data: { status: "ACTIVE" } });
           provisioningEventsService.publish(chatbotId, { type: "completed", chatbotId, status: "ACTIVE" });
         })
         .catch((err) => {
           console.error("ScrapeAndIngest Fehler:", err);
+          void prisma.knowledgeSource.update({ where: { id: pendingSource.id }, data: { status: "FAILED" } }).catch(() => {});
           provisioningEventsService.publish(chatbotId, {
             type: "failed",
             chatbotId,
