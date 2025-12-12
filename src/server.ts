@@ -6,6 +6,7 @@ import type { Express, Request, Response, NextFunction } from "express";
 import { env } from "./config/env.js";
 import { chatService } from "./services/chat.service.js";
 import { knowledgeService } from "./services/knowledge.service.js";
+import { provisioningEventsService } from "./services/provisioning-events.service.js";
 import { apiRateLimiter } from "./middleware/rate-limit.js";
 import { errorHandler } from "./middleware/error-handler.js";
 import { requireDashboardAuth } from "./middleware/require-auth.js";
@@ -222,6 +223,54 @@ export const buildServer = (): Express => {
   };
 
   // Knowledge routes (protected)
+  app.get("/api/knowledge/provisioning/stream", requireDashboardAuth, async (req, res) => {
+    const chatbotId = (req.query?.chatbotId as string) || "";
+    if (!chatbotId) return res.status(400).json({ error: "chatbotId is required" });
+
+    const { allowed } = await checkChatbotOwnership(chatbotId, req.user!.id);
+    if (!allowed) return res.status(403).json({ error: "Zugriff verweigert" });
+
+    res.status(200);
+    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+    res.setHeader("Cache-Control", "no-cache, no-transform");
+    res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
+
+    // Initial snapshot (so UI can render immediately)
+    const [bot, pendingCount, failedCount] = await Promise.all([
+      prisma.chatbot.findUnique({ where: { id: chatbotId } }).catch(() => null),
+      prisma.knowledgeSource.count({ where: { chatbotId, status: "PENDING" } }).catch(() => 0),
+      prisma.knowledgeSource.count({ where: { chatbotId, status: "FAILED" } }).catch(() => 0),
+    ]);
+
+    res.write(`event: provisioning\n`);
+    res.write(
+      `data: ${JSON.stringify({
+        type: "snapshot",
+        chatbotId,
+        chatbotStatus: bot?.status ?? null,
+        pendingSources: pendingCount,
+        failedSources: failedCount,
+        updatedAt: bot?.updatedAt ?? null,
+      })}\n\n`,
+    );
+
+    provisioningEventsService.subscribe(chatbotId, res);
+
+    const keepAlive = setInterval(() => {
+      try {
+        res.write(`: ping\n\n`);
+      } catch {
+        // ignore
+      }
+    }, 15000);
+
+    req.on("close", () => {
+      clearInterval(keepAlive);
+      provisioningEventsService.unsubscribe(chatbotId, res);
+    });
+  });
+
   app.get("/api/knowledge/sources", requireDashboardAuth, async (req, res, next) => {
     try {
       const chatbotId = (req.query?.chatbotId as string) || undefined;
@@ -275,13 +324,24 @@ export const buildServer = (): Express => {
         allowFullDownload: body.allowFullDownload,
       };
 
+      provisioningEventsService.publish(chatbotId, { type: "started", chatbotId });
+
       // fire-and-forget mit User-ID
       void knowledgeService
         .scrapeAndIngest(req.user!.id, chatbotId, options)
         .then(async () => {
           await prisma.chatbot.update({ where: { id: chatbotId }, data: { status: "ACTIVE" } });
+          provisioningEventsService.publish(chatbotId, { type: "completed", chatbotId, status: "ACTIVE" });
         })
-        .catch((err) => console.error("ScrapeAndIngest Fehler:", err));
+        .catch((err) => {
+          console.error("ScrapeAndIngest Fehler:", err);
+          provisioningEventsService.publish(chatbotId, {
+            type: "failed",
+            chatbotId,
+            status: "DRAFT",
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
 
       res.status(202).json({ status: "PENDING" });
     } catch (err) {
@@ -303,6 +363,9 @@ export const buildServer = (): Express => {
       }
 
       await knowledgeService.addTextSource(req.user!.id, chatbotId, title, content);
+      // Wenn der Bot bisher noch nicht aktiv ist, schalte ihn nach erfolgreichem Ingest frei
+      await prisma.chatbot.update({ where: { id: chatbotId }, data: { status: "ACTIVE" } }).catch(() => {});
+      provisioningEventsService.publish(chatbotId, { type: "completed", chatbotId, status: "ACTIVE" });
       res.status(201).json({ success: true });
     } catch (err) {
       next(err);
