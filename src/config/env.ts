@@ -36,6 +36,9 @@ const envSchema = z.object({
   SCRAPER_APIFY_ACTOR_ID: z.string().optional(),
   SCRAPER_APIFY_API_TOKEN: z.string().optional(),
   SCRAPER_APIFY_BASE_URL: z.string().default("https://api.apify.com/v2"),
+  // Apify run options (override actor defaults). Helps prevent 60s run timeouts.
+  SCRAPER_APIFY_RUN_TIMEOUT_SECS: z.coerce.number().int().min(60).max(6 * 60 * 60).default(3600),
+  SCRAPER_APIFY_RUN_MEMORY_MBYTES: z.coerce.number().int().min(128).max(32768).default(2048),
 });
 
 const parsed = envSchema.safeParse(process.env);

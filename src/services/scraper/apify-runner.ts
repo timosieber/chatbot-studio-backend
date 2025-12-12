@@ -50,6 +50,8 @@ export class ApifyScraperRunner {
   private async startRun(config: { actorId: string; token: string; baseUrl: string }, inputPayload: unknown, signal: AbortSignal): Promise<ApifyRun> {
     const url = new URL(`${config.baseUrl}/acts/${encodeURIComponent(config.actorId)}/runs`);
     url.searchParams.set("token", config.token);
+    url.searchParams.set("timeout", String(env.SCRAPER_APIFY_RUN_TIMEOUT_SECS));
+    url.searchParams.set("memory", String(env.SCRAPER_APIFY_RUN_MEMORY_MBYTES));
 
     const response = await fetch(url, {
       method: "POST",
