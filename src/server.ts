@@ -494,7 +494,11 @@ export const buildServer = (): Express => {
 
       // Quellen werden separat geliefert; entferne "Quellen:"-Block aus der Answer-Message
       const answer = typeof result.answer === "string"
-        ? result.answer.replace(/\n{1,2}Quellen:\s[\s\S]*$/u, "").trim()
+        ? result.answer
+          .replace(/\n{1,2}Quellen:\s[\s\S]*$/u, "")
+          .replace(/^Vielen Dank für Ihre Anfrage!?[\s\n]*/iu, "")
+          .replace(/^Danke für Ihre Anfrage!?[\s\n]*/iu, "")
+          .trim()
         : result.answer;
 
       res.json({

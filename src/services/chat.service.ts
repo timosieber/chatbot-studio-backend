@@ -98,7 +98,8 @@ export class ChatService {
           bot.description ?? "",
           "Antworte NUR basierend auf dem folgenden Kontext.",
           "Wenn die Antwort nicht im Kontext steht, sage 'Ich weiß es nicht'.",
-          "Zitiere deine Quellen am Ende der Antwort im Format: [Titel](URL).",
+          "Steige direkt in die Antwort ein (ohne Floskeln).",
+          "Vermeide Standardfloskeln wie 'Vielen Dank für Ihre Anfrage'.",
         ].join(" ");
 
     const chatModel = new ChatOpenAI({
@@ -183,7 +184,8 @@ export class ChatService {
           bot.description ?? "",
           "Antworte NUR basierend auf dem folgenden Kontext.",
           "Wenn die Antwort nicht im Kontext steht, sage 'Ich weiß es nicht'.",
-          "Zitiere deine Quellen am Ende der Antwort im Format: [Titel](URL).",
+          "Steige direkt in die Antwort ein (ohne Floskeln).",
+          "Vermeide Standardfloskeln wie 'Vielen Dank für Ihre Anfrage'.",
         ].join(" ");
 
     const chatModel = new ChatOpenAI({
