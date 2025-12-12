@@ -478,9 +478,14 @@ export const buildServer = (): Express => {
         history: Array.isArray(req.body?.history) ? req.body.history : [],
       });
 
+      // Quellen werden separat geliefert; entferne "Quellen:"-Block aus der Answer-Message
+      const answer = typeof result.answer === "string"
+        ? result.answer.replace(/\n{1,2}Quellen:\s[\s\S]*$/u, "").trim()
+        : result.answer;
+
       res.json({
         sessionId: sessionId ?? null,
-        answer: result.answer,
+        answer,
         context: result.context,
         sources: result.sources,
       });
