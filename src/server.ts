@@ -61,6 +61,14 @@ export const buildServer = (): Express => {
     }),
   );
 
+  // Convenience alias when the frontend reverse-proxies /api/* to the backend.
+  app.get("/api/healthz", (_req, res) =>
+    res.json({
+      status: "ok",
+      timestamp: new Date().toISOString(),
+    }),
+  );
+
   app.use("/api", apiRateLimiter);
 
   const makeBot = (bot: any) => ({
