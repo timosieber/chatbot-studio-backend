@@ -35,6 +35,38 @@ enum KnowledgeSourceStatus {
   FAILED
 }
 
+enum IngestionJobKind {
+  TEXT
+  SCRAPE
+  DELETE_SOURCE
+}
+
+enum IngestionJobStatus {
+  PENDING
+  RUNNING
+  FAILED
+  PARTIAL_FAILED
+  SUCCEEDED
+}
+
+enum ChunkSourceType {
+  WEB
+  PDF
+  TEXT
+}
+
+enum VectorOutboxOperation {
+  UPSERT
+  DELETE
+}
+
+enum VectorOutboxStatus {
+  PENDING
+  RUNNING
+  FAILED
+  SUCCEEDED
+}
+
 model User {
   id        String    @id @default(cuid())
   email     String    @unique
@@ -58,6 +90,7 @@ model Chatbot {
   updatedAt      DateTime             @updatedAt
   sessions       Session[]
   knowledgeSources KnowledgeSource[]
+  ingestionJobs  IngestionJob[]
 
   @@index([userId])
 }
@@ -95,11 +128,20 @@ model KnowledgeSource {
   type        KnowledgeSourceType
   label       String
   uri         String?
+  canonicalUrl String?
+  originalUrl  String?
+  extractionMethod String?
+  textQuality  String?
   status      KnowledgeSourceStatus @default(PENDING)
   metadata    Json?
+  currentRevision String?
+  lastIngestionJobId String?
+  lastIngestedAt DateTime?
   createdAt   DateTime             @default(now())
   updatedAt   DateTime             @updatedAt
   embeddings  Embedding[]
+  ingestionJobs IngestionJob[]
+  chunks      KnowledgeChunk[]
 
   @@index([chatbotId])
 }
@@ -115,4 +157,80 @@ model Embedding {
 
   @@index([knowledgeSourceId])
   @@index([vectorId])
+}
+
+model IngestionJob {
+  id          String            @id @default(cuid())
+  chatbotId   String
+  chatbot     Chatbot           @relation(fields: [chatbotId], references: [id], onDelete: Cascade)
+  knowledgeSourceId String?
+  knowledgeSource KnowledgeSource? @relation(fields: [knowledgeSourceId], references: [id], onDelete: SetNull)
+  kind        IngestionJobKind
+  status      IngestionJobStatus @default(PENDING)
+  payload     Json
+  error       String?
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  totalChunks Int               @default(0)
+  succeededVectors Int          @default(0)
+  failedVectors Int             @default(0)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  outbox      VectorOutbox[]
+
+  @@index([chatbotId, status, createdAt])
+  @@index([knowledgeSourceId])
+}
+
+model KnowledgeChunk {
+  chunkId         String          @id
+  chatbotId       String
+  knowledgeSourceId String
+  knowledgeSource KnowledgeSource @relation(fields: [knowledgeSourceId], references: [id], onDelete: Cascade)
+  createdByIngestionJobId String?
+  updatedByIngestionJobId String?
+  sourceType      ChunkSourceType
+  uri             String?
+  canonicalUrl    String?
+  originalUrl     String?
+  extractionMethod String?
+  textQuality     String?
+  phase1Anchor    Json?
+  title           String
+  sourceRevision  String
+  pageNo          Int?
+  startOffset     Int
+  endOffset       Int
+  canonicalText   String
+  canonicalTextHash String
+  embeddingModel  String
+  embeddingDimensions Int
+  tokenCount      Int
+  deletedAt       DateTime?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([knowledgeSourceId, deletedAt])
+  @@index([chatbotId, deletedAt])
+  @@index([knowledgeSourceId, sourceRevision])
+}
+
+model VectorOutbox {
+  id            String               @id @default(cuid())
+  ingestionJobId String
+  ingestionJob  IngestionJob         @relation(fields: [ingestionJobId], references: [id], onDelete: Cascade)
+  chatbotId     String
+  operation     VectorOutboxOperation
+  chunkId       String
+  status        VectorOutboxStatus    @default(PENDING)
+  attemptCount  Int                  @default(0)
+  lastError     String?
+  nextAttemptAt DateTime             @default(now())
+  processedAt   DateTime?
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  @@unique([ingestionJobId, operation, chunkId])
+  @@index([status, nextAttemptAt])
+  @@index([chatbotId, status])
 }

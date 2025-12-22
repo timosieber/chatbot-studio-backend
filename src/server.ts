@@ -6,11 +6,13 @@ import type { Express, Request, Response, NextFunction } from "express";
 import { env } from "./config/env.js";
 import { chatService } from "./services/chat.service.js";
 import { knowledgeService } from "./services/knowledge.service.js";
+import { ingestionWorker } from "./services/ingestion/ingestion-worker.js";
 import { provisioningEventsService } from "./services/provisioning-events.service.js";
 import { apiRateLimiter } from "./middleware/rate-limit.js";
 import { errorHandler } from "./middleware/error-handler.js";
 import { requireDashboardAuth } from "./middleware/require-auth.js";
 import { prisma } from "./lib/prisma.js";
+import { logger } from "./lib/logger.js";
 import { randomUUID } from "node:crypto";
 
 const LOCALHOST_PORTS = ["3000", "4200", "5173", "8080"];
@@ -43,6 +45,8 @@ const corsOptions = {
 
 export const buildServer = (): Express => {
   const app = express();
+
+  ingestionWorker.start();
 
   app.set("trust proxy", 1);
   app.use(helmet());
@@ -187,7 +191,6 @@ export const buildServer = (): Express => {
   });
 
   app.post("/api/chat", async (req: Request, res: Response, next: NextFunction) => {
-    console.log("Received body:", req.body);
     try {
       const message = (req.body?.message || req.body?.question || req.body?.prompt || "").toString();
       if (!message.trim()) {
@@ -202,12 +205,20 @@ export const buildServer = (): Express => {
           }))
         : [];
 
+      if (env.NODE_ENV !== "production") {
+        logger.info(
+          {
+            chatbotId,
+            historyLen: history.length,
+            bodyKeys: req.body && typeof req.body === "object" ? Object.keys(req.body) : [],
+          },
+          "Incoming /api/chat request",
+        );
+      }
+
       const result = await chatService.generateResponse({ chatbotId, message, history });
 
-      return res.json({
-        answer: result.answer,
-        sources: result.sources ?? [],
-      });
+      return res.json(result);
     } catch (error) {
       return next(error);
     }
@@ -297,9 +308,25 @@ export const buildServer = (): Express => {
     }
   });
 
+  app.get("/api/knowledge/jobs/:id", requireDashboardAuth, async (req, res, next) => {
+    try {
+      const jobId = req.params.id;
+      if (!jobId) return res.status(400).json({ error: "jobId is required" });
+
+      const job = await prisma.ingestionJob.findUnique({ where: { id: jobId } });
+      if (!job) return res.status(404).json({ error: "Job nicht gefunden" });
+
+      const { allowed } = await checkChatbotOwnership(job.chatbotId, req.user!.id);
+      if (!allowed) return res.status(403).json({ error: "Zugriff verweigert" });
+
+      return res.json(job);
+    } catch (err) {
+      next(err);
+    }
+  });
+
   app.post("/api/knowledge/sources/scrape", requireDashboardAuth, async (req, res, next) => {
     try {
-      console.log("Scrape Request empfangen. Body:", req.body);
       const body = req.body || {};
       const rawUrl = body.url || body.link || (Array.isArray(body.startUrls) ? body.startUrls[0] : null);
       const url = typeof rawUrl === "string" ? rawUrl.trim() : null;
@@ -307,6 +334,17 @@ export const buildServer = (): Express => {
 
       if (!chatbotId) {
         return res.status(400).json({ error: "chatbotId is required" });
+      }
+
+      if (env.NODE_ENV !== "production") {
+        logger.info(
+          {
+            chatbotId,
+            url,
+            startUrlsCount: Array.isArray(body.startUrls) ? body.startUrls.length : 0,
+          },
+          "Incoming /api/knowledge/sources/scrape request",
+        );
       }
 
       // Prüfe ob der User Zugriff auf diesen Chatbot hat (mit Legacy-Migration)
@@ -335,39 +373,8 @@ export const buildServer = (): Express => {
       };
 
       provisioningEventsService.publish(chatbotId, { type: "started", chatbotId });
-
-      // Create a PENDING placeholder so the dashboard shows progress immediately
-      const pendingSource = await prisma.knowledgeSource.create({
-        data: {
-          chatbotId,
-          label: options.startUrls[0] ?? "Scrape",
-          type: "URL",
-          status: "PENDING",
-          uri: options.startUrls[0] ?? null,
-          metadata: { startedAt: new Date().toISOString() },
-        },
-      });
-
-      // fire-and-forget mit User-ID
-      void knowledgeService
-        .scrapeAndIngest(req.user!.id, chatbotId, options)
-        .then(async () => {
-          await prisma.knowledgeSource.update({ where: { id: pendingSource.id }, data: { status: "READY" } }).catch(() => {});
-          await prisma.chatbot.update({ where: { id: chatbotId }, data: { status: "ACTIVE" } });
-          provisioningEventsService.publish(chatbotId, { type: "completed", chatbotId, status: "ACTIVE" });
-        })
-        .catch((err) => {
-          console.error("ScrapeAndIngest Fehler:", err);
-          void prisma.knowledgeSource.update({ where: { id: pendingSource.id }, data: { status: "FAILED" } }).catch(() => {});
-          provisioningEventsService.publish(chatbotId, {
-            type: "failed",
-            chatbotId,
-            status: "DRAFT",
-            error: err instanceof Error ? err.message : String(err),
-          });
-        });
-
-      res.status(202).json({ status: "PENDING" });
+      const { jobId } = await knowledgeService.startScrapeIngestion(chatbotId, options);
+      res.status(202).json({ status: "PENDING", jobId });
     } catch (err) {
       console.error("ScrapeAndIngest Fehler:", err);
       next(err);
@@ -376,7 +383,7 @@ export const buildServer = (): Express => {
 
   app.post("/api/knowledge/sources/text", requireDashboardAuth, async (req, res, next) => {
     try {
-      const { chatbotId, title, content } = req.body || {};
+      const { chatbotId, title, content, sourceKey, canonicalUrl, originalUrl, extractionMethod, textQuality } = req.body || {};
       if (!chatbotId) return res.status(400).json({ error: "chatbotId ist erforderlich" });
       if (!title || !content) return res.status(400).json({ error: "title und content sind erforderlich" });
 
@@ -386,11 +393,15 @@ export const buildServer = (): Express => {
         return res.status(403).json({ error: "Zugriff verweigert" });
       }
 
-      await knowledgeService.addTextSource(req.user!.id, chatbotId, title, content);
-      // Wenn der Bot bisher noch nicht aktiv ist, schalte ihn nach erfolgreichem Ingest frei
-      await prisma.chatbot.update({ where: { id: chatbotId }, data: { status: "ACTIVE" } }).catch(() => {});
-      provisioningEventsService.publish(chatbotId, { type: "completed", chatbotId, status: "ACTIVE" });
-      res.status(201).json({ success: true });
+      const opts = {
+        ...(typeof sourceKey === "string" ? { sourceKey } : {}),
+        ...(typeof canonicalUrl === "string" ? { canonicalUrl } : {}),
+        ...(typeof originalUrl === "string" ? { originalUrl } : {}),
+        ...(typeof extractionMethod === "string" ? { extractionMethod } : {}),
+        ...(typeof textQuality === "string" ? { textQuality } : {}),
+      };
+      const { jobId, knowledgeSourceId } = await knowledgeService.startTextIngestion(req.user!.id, chatbotId, title, content, opts);
+      res.status(202).json({ status: "PENDING", jobId, knowledgeSourceId });
     } catch (err) {
       next(err);
     }
@@ -415,8 +426,8 @@ export const buildServer = (): Express => {
         return res.status(403).json({ error: "Zugriff verweigert" });
       }
 
-      await knowledgeService.deleteSource(req.user!.id, sourceId);
-      res.status(204).send();
+      const { jobId } = await knowledgeService.startDeleteSource(source.chatbotId, sourceId);
+      res.status(202).json({ status: "PENDING", jobId });
     } catch (err) {
       next(err);
     }
@@ -507,20 +518,9 @@ export const buildServer = (): Express => {
         history: Array.isArray(req.body?.history) ? req.body.history : [],
       });
 
-      // Quellen werden separat geliefert; entferne "Quellen:"-Block aus der Answer-Message
-      const answer = typeof result.answer === "string"
-        ? result.answer
-          .replace(/\n{1,2}Quellen:\s[\s\S]*$/u, "")
-          .replace(/^Vielen Dank für Ihre Anfrage!?[\s\n]*/iu, "")
-          .replace(/^Danke für Ihre Anfrage!?[\s\n]*/iu, "")
-          .trim()
-        : result.answer;
-
       res.json({
         sessionId: sessionId ?? null,
-        answer,
-        context: result.context,
-        sources: result.sources,
+        rag: result,
       });
     } catch (err) {
       next(err);

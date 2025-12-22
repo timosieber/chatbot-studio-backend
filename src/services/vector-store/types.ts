@@ -14,15 +14,14 @@ export interface VectorMatch {
 
 export interface VectorStore {
   upsertEmbedding(args: {
-    vectorId?: string;
+    vectorId: string;
     vector: number[];
     metadata: VectorMetadata;
-    content: string;
   }): Promise<string>;
 
   similaritySearch(args: { chatbotId: string; vector: number[]; topK: number }): Promise<VectorMatch[]>;
 
-  deleteByKnowledgeSource(args: { chatbotId: string; knowledgeSourceId: string }): Promise<void>;
+  deleteByIds(args: { chatbotId: string; vectorIds: string[] }): Promise<void>;
 
     // Delete all vectors for a chatbot/namespace
   deleteByChatbot(args: { chatbotId: string }): Promise<void>;

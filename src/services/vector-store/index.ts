@@ -15,10 +15,19 @@ export const getVectorStore = (): VectorStore => {
       logger.info("Pinecone Vector Store initialisiert");
       return instance;
     } catch (error) {
-      logger.error({ err: error }, "Pinecone konnte nicht initialisiert werden – fallback memory");
+      logger.error({ err: error }, "Pinecone konnte nicht initialisiert werden");
+      if (env.NODE_ENV === "production") {
+        throw error instanceof Error ? error : new Error("Pinecone init failed");
+      }
     }
+    instance = new MemoryVectorStore();
+    logger.warn("Verwende Memory Vector Store (dev/test fallback)");
+    return instance;
   }
 
+  if (env.NODE_ENV === "production") {
+    throw new Error("Memory Vector Store ist in Production nicht erlaubt");
+  }
   instance = new MemoryVectorStore();
   logger.warn("Verwende Memory Vector Store (nur für lokale Entwicklung geeignet)");
   return instance;

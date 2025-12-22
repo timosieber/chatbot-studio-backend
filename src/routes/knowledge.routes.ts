@@ -9,6 +9,11 @@ const addTextSchema = z.object({
   chatbotId: z.string().min(8),
   label: z.string().min(3),
   content: z.string().min(20),
+  sourceKey: z.string().min(1).max(200).optional(),
+  canonicalUrl: z.string().url().optional(),
+  originalUrl: z.string().url().optional(),
+  extractionMethod: z.string().min(1).max(50).optional(),
+  textQuality: z.string().min(1).max(50).optional(),
 });
 
 const scrapeSchema = z.object({
@@ -38,8 +43,20 @@ router.get("/sources", async (req, res, next) => {
 router.post("/sources/text", async (req, res, next) => {
   try {
     const payload = addTextSchema.parse(req.body);
-    const source = await knowledgeService.addTextSource(req.user!.id, payload.chatbotId, payload.label, payload.content);
-    res.status(201).json(source);
+    const { jobId, knowledgeSourceId } = await knowledgeService.startTextIngestion(
+      req.user!.id,
+      payload.chatbotId,
+      payload.label,
+      payload.content,
+      {
+        ...(payload.sourceKey ? { sourceKey: payload.sourceKey } : {}),
+        ...(payload.canonicalUrl ? { canonicalUrl: payload.canonicalUrl } : {}),
+        ...(payload.originalUrl ? { originalUrl: payload.originalUrl } : {}),
+        ...(payload.extractionMethod ? { extractionMethod: payload.extractionMethod } : {}),
+        ...(payload.textQuality ? { textQuality: payload.textQuality } : {}),
+      },
+    );
+    res.status(202).json({ status: "PENDING", jobId, knowledgeSourceId });
   } catch (error) {
     next(error);
   }
@@ -59,31 +76,8 @@ router.post("/sources/scrape", async (req, res, next) => {
       ...(payload.rateLimitPerHost !== undefined ? { rateLimitPerHost: payload.rateLimitPerHost } : {}),
       ...(payload.allowFullDownload !== undefined ? { allowFullDownload: payload.allowFullDownload } : {}),
     };
-    // Create pending placeholder
-    const pendingSource = await prisma.knowledgeSource.create({
-      data: {
-        chatbotId: payload.chatbotId,
-        label: payload.startUrls[0] ?? "Scrape",
-        type: "URL",
-        status: "PENDING",
-        uri: payload.startUrls[0] ?? null,
-        metadata: {},
-      },
-    });
-
-    // Fire-and-forget background job
-    void knowledgeService
-      .scrapeAndIngest(req.user!.id, payload.chatbotId, scrapeOptions)
-      .then(async () => {
-        await prisma.knowledgeSource.update({ where: { id: pendingSource.id }, data: { status: "READY" } });
-        await prisma.chatbot.update({ where: { id: payload.chatbotId }, data: { status: "ACTIVE" } });
-      })
-      .catch(async (err) => {
-        await prisma.knowledgeSource.update({ where: { id: pendingSource.id }, data: { status: "FAILED" } });
-        console.error("Background scrape failed", err);
-      });
-
-    res.status(202).json({ status: "PENDING", sourceId: pendingSource.id });
+    const { jobId } = await knowledgeService.startScrapeIngestion(payload.chatbotId, scrapeOptions);
+    res.status(202).json({ status: "PENDING", jobId });
   } catch (error) {
     next(error);
   }
@@ -91,8 +85,10 @@ router.post("/sources/scrape", async (req, res, next) => {
 
 router.delete("/sources/:id", async (req, res, next) => {
   try {
-    await knowledgeService.deleteSource(req.user!.id, req.params.id);
-    res.status(204).send();
+    const source = await prisma.knowledgeSource.findUnique({ where: { id: req.params.id } });
+    if (!source) return res.status(404).json({ error: "Source nicht gefunden" });
+    const { jobId } = await knowledgeService.startDeleteSource(source.chatbotId, source.id);
+    res.status(202).json({ status: "PENDING", jobId });
   } catch (error) {
     next(error);
   }

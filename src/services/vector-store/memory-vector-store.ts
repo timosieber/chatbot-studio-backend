@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import type { VectorMatch, VectorMetadata, VectorStore } from "./types.js";
 
 interface StoredVector {
@@ -15,16 +14,13 @@ export class MemoryVectorStore implements VectorStore {
     vectorId,
     vector,
     metadata,
-    content,
   }: {
-    vectorId?: string;
+    vectorId: string;
     vector: number[];
     metadata: VectorMetadata;
-    content: string;
   }) {
-    const id = vectorId ?? randomUUID();
-    this.store.set(id, { id, vector, metadata, content });
-    return id;
+    this.store.set(vectorId, { id: vectorId, vector, metadata, content: "" });
+    return vectorId;
   }
 
   async similaritySearch({ chatbotId, vector, topK }: { chatbotId: string; vector: number[]; topK: number }) {
@@ -41,12 +37,8 @@ export class MemoryVectorStore implements VectorStore {
       .slice(0, topK);
   }
 
-  async deleteByKnowledgeSource({ knowledgeSourceId }: { chatbotId: string; knowledgeSourceId: string }) {
-    for (const [id, vector] of this.store.entries()) {
-      if (vector.metadata.knowledgeSourceId === knowledgeSourceId) {
-        this.store.delete(id);
-      }
-    }
+  async deleteByIds({ vectorIds }: { chatbotId: string; vectorIds: string[] }) {
+    vectorIds.forEach((id) => this.store.delete(id));
   }
 
   async deleteByChatbot({ chatbotId }: { chatbotId: string }) {

@@ -44,8 +44,7 @@ router.post("/messages", async (req, res, next) => {
     const result = await chatService.handleMessage(session, payload.message);
     res.json({
       sessionId: payload.sessionId,
-      answer: result.answer,
-      context: result.context,
+      rag: result,
     });
   } catch (error) {
     next(error);

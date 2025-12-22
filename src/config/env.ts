@@ -31,8 +31,17 @@ const envSchema = z.object({
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_COMPLETIONS_MODEL: z.string().default("gpt-4o-mini"),
   OPENAI_EMBEDDINGS_MODEL: z.string().default("text-embedding-3-small"),
+  EMBEDDINGS_PROVIDER: z.enum(["openai", "deterministic_test"]).default("openai"),
   RAG_ENABLE_QUERY_REWRITE: booleanString.default(true),
   RAG_MIN_RELEVANCE: z.coerce.number().min(0).max(1).default(0.35),
+  RAG_DETERMINISTIC_LLM: booleanString.default(true),
+  RAG_MIN_HYDRATED_CHUNKS: z.coerce.number().int().min(0).max(50).default(3),
+  RAG_MIN_SUPPORTED_CLAIMS: z.coerce.number().int().min(0).max(50).default(2),
+  RAG_MAX_CONTEXT_CHARS: z.coerce.number().int().min(1000).max(200_000).default(20_000),
+  INGESTION_WORKER_ENABLED: booleanString.default(true),
+  INGESTION_WORKER_POLL_MS: z.coerce.number().int().min(250).max(60000).default(2000),
+  INGESTION_MAX_VECTOR_ATTEMPTS: z.coerce.number().int().min(1).max(20).default(5),
+  OUTBOX_RUNNING_TTL_MS: z.coerce.number().int().min(1000).max(24 * 60 * 60 * 1000).default(5 * 60 * 1000),
   SCRAPER_DIR: z.string().optional(),
   PERPLEXITY_API_KEY: z.string().optional(),
   SCRAPER_APIFY_ACTOR_ID: z.string().optional(),
@@ -49,6 +58,30 @@ if (!parsed.success) {
   // eslint-disable-next-line no-console
   console.error("❌ Invalid environment configuration", parsed.error.flatten().fieldErrors);
   process.exit(1);
+}
+
+// Hard guarantees for production: no fallbacks allowed.
+if (parsed.data.NODE_ENV === "production") {
+  if (parsed.data.VECTOR_DB_PROVIDER !== "pinecone") {
+    // eslint-disable-next-line no-console
+    console.error("❌ Production requires VECTOR_DB_PROVIDER=pinecone (no fallback stores allowed)");
+    process.exit(1);
+  }
+  if (!parsed.data.PINECONE_API_KEY || !parsed.data.PINECONE_INDEX) {
+    // eslint-disable-next-line no-console
+    console.error("❌ Pinecone not fully configured (PINECONE_API_KEY + PINECONE_INDEX required)");
+    process.exit(1);
+  }
+  if (parsed.data.EMBEDDINGS_PROVIDER !== "openai") {
+    // eslint-disable-next-line no-console
+    console.error("❌ Production requires EMBEDDINGS_PROVIDER=openai");
+    process.exit(1);
+  }
+  if (!parsed.data.OPENAI_API_KEY) {
+    // eslint-disable-next-line no-console
+    console.error("❌ Production requires OPENAI_API_KEY (no mock embeddings allowed)");
+    process.exit(1);
+  }
 }
 
 const allowedOrigins = parsed.data.CORS_ALLOWED_ORIGINS
