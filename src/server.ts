@@ -181,7 +181,15 @@ export const buildServer = (): Express => {
       if (!existing) return res.status(404).json({ error: "Chatbot nicht gefunden" });
       if (!allowed) return res.status(403).json({ error: "Zugriff verweigert" });
 
-      await knowledgeService.purgeChatbotVectors(chatbotId);
+      try {
+        await knowledgeService.purgeChatbotVectors(chatbotId);
+      } catch (purgeError) {
+        console.warn("DELETE /api/chatbots/:id warning: purgeChatbotVectors failed:", {
+          chatbotId,
+          userId: req.user!.id,
+          error: purgeError instanceof Error ? purgeError.message : String(purgeError),
+        });
+      }
       await prisma.chatbot.delete({ where: { id: chatbotId } });
       res.status(204).send();
     } catch (err) {
