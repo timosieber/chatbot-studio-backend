@@ -4,6 +4,7 @@ import { logger } from "../../lib/logger.js";
 import { scraperRunner } from "../scraper/index.js";
 import type { DatasetItem, ScrapeOptions } from "../scraper/types.js";
 import { getVectorStore } from "../vector-store/index.js";
+import { provisioningEventsService } from "../provisioning-events.service.js";
 import { canonicalizeText } from "./canonicalize.js";
 import { chunkTextWithOffsets } from "./chunking.js";
 import { computeChunkId, computePdfSourceRevision, computeSourceRevision } from "./chunk-id.js";
@@ -753,9 +754,16 @@ export class IngestionWorker {
       if (nextStatus === "SUCCEEDED" && job.kind !== "DELETE_SOURCE") {
         try {
           await prisma.chatbot.update({ where: { id: job.chatbotId }, data: { status: "ACTIVE" } });
+          provisioningEventsService.publish(job.chatbotId, { type: "completed", chatbotId: job.chatbotId, status: "ACTIVE" });
         } catch (updateErr) {
           logger.error({ err: updateErr, chatbotId: job.chatbotId }, "Failed to mark Chatbot as ACTIVE after ingestion");
         }
+      } else if (nextStatus !== "SUCCEEDED") {
+        provisioningEventsService.publish(job.chatbotId, {
+          type: "failed",
+          chatbotId: job.chatbotId,
+          status: nextStatus,
+        });
       }
 
       if (job.knowledgeSourceId) {
@@ -785,6 +793,25 @@ export class IngestionWorker {
           } catch (updateErr) {
             logger.error({ err: updateErr, knowledgeSourceId: job.knowledgeSourceId }, "Failed to mark KnowledgeSource as FAILED after ingestion");
           }
+        }
+      } else if (job.kind === "SCRAPE") {
+        try {
+          if (nextStatus === "SUCCEEDED") {
+            await prisma.knowledgeSource.updateMany({
+              where: { chatbotId: job.chatbotId, lastIngestionJobId: job.id },
+              data: { status: "READY", lastIngestedAt: new Date() },
+            });
+          } else {
+            await prisma.knowledgeSource.updateMany({
+              where: { chatbotId: job.chatbotId, lastIngestionJobId: job.id },
+              data: { status: "FAILED" },
+            });
+          }
+        } catch (updateErr) {
+          logger.error(
+            { err: updateErr, chatbotId: job.chatbotId, ingestionJobId: job.id },
+            "Failed to update KnowledgeSources after scrape ingestion",
+          );
         }
       }
     }
