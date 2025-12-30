@@ -685,28 +685,32 @@ export class IngestionWorker {
           assertValidCitationFields(chunk);
 
           const vector = await embeddings.embed(chunk.canonicalText);
+          // Build metadata object, excluding null values (Pinecone rejects nulls)
+          const metadata: Record<string, string | number | boolean> = {
+            chatbotId: chunk.chatbotId,
+            chunk_id: chunk.chunkId,
+            source_id: chunk.knowledgeSourceId,
+            source_type: chunk.sourceType,
+            title: chunk.title,
+            start_offset: chunk.startOffset,
+            end_offset: chunk.endOffset,
+            source_revision: chunk.sourceRevision,
+            embedding_model: chunk.embeddingModel,
+            embedding_dimensions: chunk.embeddingDimensions,
+          };
+          // Only add optional fields if they have non-null values
+          if (chunk.uri) metadata.uri = chunk.uri;
+          if (chunk.canonicalUrl) metadata.canonical_url = chunk.canonicalUrl;
+          if (chunk.originalUrl) metadata.original_url = chunk.originalUrl;
+          if (chunk.extractionMethod) metadata.extraction_method = chunk.extractionMethod;
+          if (chunk.textQuality) metadata.text_quality = chunk.textQuality;
+          if (chunk.phase1Anchor) metadata.phase1_anchor = JSON.stringify(chunk.phase1Anchor);
+          if (chunk.pageNo !== null) metadata.page_no = chunk.pageNo;
+
           await vectorStore.upsertEmbedding({
             vectorId: chunk.chunkId,
             vector,
-            metadata: {
-              chatbotId: chunk.chatbotId,
-              chunk_id: chunk.chunkId,
-              source_id: chunk.knowledgeSourceId,
-              source_type: chunk.sourceType,
-              uri: chunk.uri,
-              canonical_url: chunk.canonicalUrl ?? null,
-              original_url: chunk.originalUrl ?? null,
-              extraction_method: chunk.extractionMethod ?? null,
-              text_quality: chunk.textQuality ?? null,
-              phase1_anchor: (chunk.phase1Anchor ?? null) as any,
-              title: chunk.title,
-              page_no: chunk.pageNo ?? null,
-              start_offset: chunk.startOffset,
-              end_offset: chunk.endOffset,
-              source_revision: chunk.sourceRevision,
-              embedding_model: chunk.embeddingModel,
-              embedding_dimensions: chunk.embeddingDimensions,
-            },
+            metadata,
           });
         } else if (item.operation === "DELETE") {
           await vectorStore.deleteByIds({ chatbotId: item.chatbotId, vectorIds: [item.chunkId] });
