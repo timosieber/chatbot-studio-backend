@@ -189,17 +189,21 @@ export const buildServer = (): Express => {
       if (!existing) return res.status(404).json({ error: "Chatbot nicht gefunden" });
       if (!allowed) return res.status(403).json({ error: "Zugriff verweigert" });
 
-      try {
-        await knowledgeService.purgeChatbotVectors(chatbotId);
-      } catch (purgeError) {
-        console.warn("DELETE /api/chatbots/:id warning: purgeChatbotVectors failed:", {
+      // Delete chatbot from DB first (cascades to related records)
+      await prisma.chatbot.delete({ where: { id: chatbotId } });
+
+      // Respond immediately - don't block on vector deletion
+      res.status(204).send();
+
+      // Purge vectors asynchronously in the background (fire-and-forget)
+      // This prevents Gateway Timeout (502) on Railway for large vector sets
+      knowledgeService.purgeChatbotVectors(chatbotId).catch((purgeError) => {
+        logger.warn({
           chatbotId,
           userId: req.user!.id,
           error: purgeError instanceof Error ? purgeError.message : String(purgeError),
-        });
-      }
-      await prisma.chatbot.delete({ where: { id: chatbotId } });
-      res.status(204).send();
+        }, "DELETE /api/chatbots/:id warning: purgeChatbotVectors failed (async cleanup)");
+      });
     } catch (err) {
       console.error("DELETE /api/chatbots/:id error:", err);
       res.status(500).json({ error: "Fehler beim Löschen" });
