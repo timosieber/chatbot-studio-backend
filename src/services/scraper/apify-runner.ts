@@ -136,6 +136,10 @@ export class ApifyScraperRunner {
 
       const pages = json.filter((item): item is DatasetItem => item?.type === "page");
       datasetItems.push(...pages);
+      console.log(`[ApifyRunner] Dataset chunk: received ${json.length} items, ${pages.length} pages (offset=${offset})`);
+      if (json.length > 0 && pages.length === 0) {
+        console.log(`[ApifyRunner] WARNING: Items have unexpected types:`, json.slice(0, 3).map((i: any) => i?.type));
+      }
       logger.info({ datasetId, offset, limit: PAGE_SIZE, received: json.length, pages: pages.length }, "Apify Dataset Chunk geladen");
 
       if (json.length < PAGE_SIZE) break;
@@ -158,11 +162,15 @@ export class ApifyScraperRunner {
     const timeout = setTimeout(() => controller.abort(), RUN_TIMEOUT_MS);
 
     try {
+      console.log(`[ApifyRunner] Starting Apify run for actor ${config.actorId}`);
       logger.info({ actor: config.actorId }, "Apify Scraper Run wird gestartet");
       const started = await this.startRun(config, inputPayload, controller.signal);
+      console.log(`[ApifyRunner] Apify run started with id ${started.id}`);
       logger.info({ actor: config.actorId, runId: started.id }, "Apify Run gestartet");
 
+      console.log(`[ApifyRunner] Waiting for run ${started.id} to finish...`);
       const finished = await this.waitForRunFinished(config, started.id, controller.signal);
+      console.log(`[ApifyRunner] Apify run ${finished.id} finished with status ${finished.status}`);
       logger.info({ actor: config.actorId, runId: finished.id, status: finished.status }, "Apify Run beendet");
 
       if (finished.status !== "SUCCEEDED") {
@@ -174,7 +182,9 @@ export class ApifyScraperRunner {
         throw new ServiceUnavailableError("Apify Run hatte kein defaultDatasetId");
       }
 
+      console.log(`[ApifyRunner] Fetching dataset items from dataset ${datasetId}`);
       const datasetItems = await this.fetchDatasetItems(config, datasetId, controller.signal);
+      console.log(`[ApifyRunner] Fetched ${datasetItems.length} pages from dataset`);
       logger.info({ actor: config.actorId, runId: finished.id, pages: datasetItems.length }, "Apify Dataset geladen");
       return datasetItems;
     } catch (error) {

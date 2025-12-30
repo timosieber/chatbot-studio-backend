@@ -66,6 +66,7 @@ export class IngestionWorker {
       await this.processOutboxBatch();
       await this.finalizeJobsIfPossible();
     } catch (err) {
+      console.error("[IngestionWorker] tick failed:", err);
       logger.error({ err }, "IngestionWorker tick failed");
     } finally {
       this.inFlight = false;
@@ -99,6 +100,8 @@ export class IngestionWorker {
     });
     if (!job) return;
 
+    console.log(`[IngestionWorker] Processing job ${job.id} (kind: ${job.kind}, chatbotId: ${job.chatbotId})`);
+
     const claimed = await prisma.ingestionJob.updateMany({
       where: { id: job.id, status: "PENDING" },
       data: { status: "RUNNING", startedAt: new Date(), error: null },
@@ -126,8 +129,10 @@ export class IngestionWorker {
       }
 
       if (job.kind === "SCRAPE") {
+        console.log(`[IngestionWorker] Starting SCRAPE job ${job.id}`);
         const payload = job.payload as unknown as ScrapeJobPayload;
         await this.runScrapeJob({ jobId: job.id, chatbotId: job.chatbotId, options: payload.options });
+        console.log(`[IngestionWorker] SCRAPE job ${job.id} completed successfully`);
         return;
       }
 
@@ -270,7 +275,9 @@ export class IngestionWorker {
   }
 
   private async runScrapeJob(args: { jobId: string; chatbotId: string; options: ScrapeOptions }) {
+    console.log(`[IngestionWorker] runScrapeJob: calling scraperRunner.run() for job ${args.jobId}`);
     const pages: DatasetItem[] = await scraperRunner.run(args.options);
+    console.log(`[IngestionWorker] runScrapeJob: scraperRunner returned ${pages?.length ?? 0} pages`);
     if (!Array.isArray(pages)) throw new Error("Scraper returned invalid dataset");
 
     let stagedChunks = 0;
