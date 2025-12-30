@@ -666,6 +666,8 @@ export class IngestionWorker {
     });
     if (!items.length) return;
 
+    console.log(`[IngestionWorker] processOutboxBatch: processing ${items.length} outbox items`);
+
     const vectorStore = getVectorStore();
     const embeddings = getEmbeddingsProvider();
 
@@ -749,8 +751,11 @@ export class IngestionWorker {
     });
     if (!running.length) return;
 
+    console.log(`[IngestionWorker] finalizeJobsIfPossible: found ${running.length} RUNNING jobs`);
+
     for (const job of running) {
       const totalOutbox = await prisma.vectorOutbox.count({ where: { ingestionJobId: job.id } });
+      console.log(`[IngestionWorker] Job ${job.id}: totalOutbox=${totalOutbox}`);
       if (totalOutbox === 0) {
         const startedAt = job.startedAt ?? null;
         const cutoff = new Date(Date.now() - env.OUTBOX_RUNNING_TTL_MS);
@@ -768,6 +773,7 @@ export class IngestionWorker {
       const pendingOrRunning = await prisma.vectorOutbox.count({
         where: { ingestionJobId: job.id, status: { in: ["PENDING", "RUNNING"] } },
       });
+      console.log(`[IngestionWorker] Job ${job.id}: pendingOrRunning=${pendingOrRunning}`);
       if (pendingOrRunning > 0) continue;
 
       const retryableFailed = await prisma.vectorOutbox.count({
@@ -788,6 +794,7 @@ export class IngestionWorker {
       });
 
       const nextStatus = terminalFailed > 0 ? "PARTIAL_FAILED" : "SUCCEEDED";
+      console.log(`[IngestionWorker] Job ${job.id}: finalizing with status=${nextStatus}, terminalFailed=${terminalFailed}`);
       await prisma.ingestionJob.update({
         where: { id: job.id },
         data: { status: nextStatus, finishedAt: new Date() },
@@ -795,8 +802,10 @@ export class IngestionWorker {
 
       if (nextStatus === "SUCCEEDED" && job.kind !== "DELETE_SOURCE") {
         try {
+          console.log(`[IngestionWorker] Job ${job.id}: setting chatbot ${job.chatbotId} to ACTIVE`);
           await prisma.chatbot.update({ where: { id: job.chatbotId }, data: { status: "ACTIVE" } });
           provisioningEventsService.publish(job.chatbotId, { type: "completed", chatbotId: job.chatbotId, status: "ACTIVE" });
+          console.log(`[IngestionWorker] Job ${job.id}: chatbot ${job.chatbotId} is now ACTIVE`);
         } catch (updateErr) {
           logger.error({ err: updateErr, chatbotId: job.chatbotId }, "Failed to mark Chatbot as ACTIVE after ingestion");
         }
