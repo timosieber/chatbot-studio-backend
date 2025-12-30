@@ -341,6 +341,8 @@ export class ChatService {
     let topK = 20;
     const maxTopK = 1000;
 
+    console.log(`[ChatService] retrieveCandidates: chatbotId=${chatbotId}, question="${question.slice(0, 50)}"`);
+
     while (true) {
       const rawMatches = await this.vectorStore.similaritySearch({
         chatbotId,
@@ -348,7 +350,14 @@ export class ChatService {
         topK,
       });
 
+      console.log(`[ChatService] Pinecone returned ${rawMatches.length} raw matches for chatbotId=${chatbotId}`);
+      if (rawMatches.length > 0) {
+        console.log(`[ChatService] Top 3 raw matches:`, rawMatches.slice(0, 3).map(m => ({ id: m.id, score: m.score })));
+      }
+
       const hydrated = await this.hydrateMatches(rawMatches);
+      console.log(`[ChatService] Hydrated ${hydrated.length} of ${rawMatches.length} matches`);
+
       if (hydrated.length === 0 && rawMatches.length > 0 && topK < maxTopK) {
         logger.warn(
           { chatbotId, requestedTopK: topK, raw: rawMatches.length, hydrated: hydrated.length },
@@ -361,7 +370,10 @@ export class ChatService {
       const top = hydrated[0];
       const topScore = top?.score ?? 0;
       const relevance = this.normalizeRelevance(topScore);
+      console.log(`[ChatService] Top score=${topScore}, normalized relevance=${relevance}, minRelevance=${env.RAG_MIN_RELEVANCE}`);
+
       if (relevance < env.RAG_MIN_RELEVANCE) {
+        console.log(`[ChatService] Relevance ${relevance} < ${env.RAG_MIN_RELEVANCE}, returning empty`);
         return [];
       }
 
