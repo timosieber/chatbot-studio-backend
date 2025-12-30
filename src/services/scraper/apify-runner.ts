@@ -134,13 +134,29 @@ export class ApifyScraperRunner {
         throw new ServiceUnavailableError("Apify Dataset Items lieferten keine Liste");
       }
 
-      const pages = json.filter((item): item is DatasetItem => item?.type === "page");
-      datasetItems.push(...pages);
-      console.log(`[ApifyRunner] Dataset chunk: received ${json.length} items, ${pages.length} pages (offset=${offset})`);
-      if (json.length > 0 && pages.length === 0) {
+      let pageCount = 0;
+      let pdfCount = 0;
+      const items: DatasetItem[] = [];
+      for (const item of json) {
+        if (item?.type === "page") {
+          items.push(item);
+          pageCount++;
+        } else if (item?.type === "pdf") {
+          items.push(item);
+          pdfCount++;
+        }
+      }
+      datasetItems.push(...items);
+      console.log(
+        `[ApifyRunner] Dataset chunk: received ${json.length} items, ${pageCount} pages, ${pdfCount} pdfs (offset=${offset})`
+      );
+      if (json.length > 0 && items.length === 0) {
         console.log(`[ApifyRunner] WARNING: Items have unexpected types:`, json.slice(0, 3).map((i: any) => i?.type));
       }
-      logger.info({ datasetId, offset, limit: PAGE_SIZE, received: json.length, pages: pages.length }, "Apify Dataset Chunk geladen");
+      logger.info(
+        { datasetId, offset, limit: PAGE_SIZE, received: json.length, pages: pageCount, pdfs: pdfCount },
+        "Apify Dataset Chunk geladen"
+      );
 
       if (json.length < PAGE_SIZE) break;
       offset += PAGE_SIZE;

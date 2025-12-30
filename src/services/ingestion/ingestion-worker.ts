@@ -2,7 +2,7 @@ import { env } from "../../config/env.js";
 import { prisma } from "../../lib/prisma.js";
 import { logger } from "../../lib/logger.js";
 import { scraperRunner } from "../scraper/index.js";
-import type { DatasetItem, ScrapeOptions } from "../scraper/types.js";
+import type { DatasetItem, DatasetPage, DatasetPdf, ScrapeOptions } from "../scraper/types.js";
 import { getVectorStore } from "../vector-store/index.js";
 import { provisioningEventsService } from "../provisioning-events.service.js";
 import { canonicalizeText } from "./canonicalize.js";
@@ -276,18 +276,82 @@ export class IngestionWorker {
 
   private async runScrapeJob(args: { jobId: string; chatbotId: string; options: ScrapeOptions }) {
     console.log(`[IngestionWorker] runScrapeJob: calling scraperRunner.run() for job ${args.jobId}`);
-    const pages: DatasetItem[] = await scraperRunner.run(args.options);
-    console.log(`[IngestionWorker] runScrapeJob: scraperRunner returned ${pages?.length ?? 0} pages`);
-    if (!Array.isArray(pages)) throw new Error("Scraper returned invalid dataset");
+    const datasetItems: DatasetItem[] = await scraperRunner.run(args.options);
+    if (!Array.isArray(datasetItems)) throw new Error("Scraper returned invalid dataset");
+
+    const pages: DatasetPage[] = [];
+    const pdfItems: DatasetPdf[] = [];
+    for (const item of datasetItems) {
+      if (item.type === "page") {
+        pages.push(item);
+      } else if (item.type === "pdf") {
+        pdfItems.push(item);
+      }
+    }
+
+    console.log(
+      `[IngestionWorker] runScrapeJob: scraperRunner returned ${datasetItems.length} items (${pages.length} pages, ${pdfItems.length} pdfs)`
+    );
 
     let stagedChunks = 0;
+    const handledPdfUrls = new Set<string>();
+
+    const ingestPdf = async (pdf: DatasetPdf, context: { sourcePage?: string | null; fetchedAt?: string | null }) => {
+      const pdfTitle = pdf.title || pdf.pdf_url || "PDF-Dokument";
+      const pdfUri = pdf.pdf_url;
+      if (!pdfUri) return 0;
+
+      if (handledPdfUrls.has(pdfUri)) return 0;
+      handledPdfUrls.add(pdfUri);
+
+      const pagesArr = (pdf.pages || []).map((p) => ({ pageNo: p.page_no, text: p.text }));
+      if (!pagesArr.length && !pdf.perplexity_content) return 0;
+
+      const pdfSource = await this.upsertKnowledgeSource({
+        chatbotId: args.chatbotId,
+        label: pdfTitle,
+        uri: pdfUri,
+        canonicalUrl: pdfUri,
+        originalUrl: pdfUri,
+        extractionMethod: (pdf.extraction_method ?? null) as any,
+        textQuality: (pdf.text_quality ?? null) as any,
+        type: "FILE",
+        metadata: {
+          fetchedAt: context.fetchedAt ?? pdf.fetched_at ?? null,
+          pageCount: pdf.overall?.page_count,
+          sourcePage: context.sourcePage ?? pdf.source_page ?? null,
+        },
+        jobId: args.jobId,
+      });
+
+      if (pdf.perplexity_content) {
+        // We cannot produce page anchors from a flat Perplexity blob -> hard fail.
+        throw new Error(`PDF ${pdfUri} missing pages[]; cannot generate required page anchors`);
+      }
+
+      return await this.stagePdfSource({
+        jobId: args.jobId,
+        chatbotId: args.chatbotId,
+        knowledgeSourceId: pdfSource.id,
+        title: pdfTitle,
+        uri: pdfUri,
+        canonicalUrl: pdfUri,
+        originalUrl: pdfUri,
+        extractionMethod: (pdf.extraction_method ?? null) as any,
+        textQuality: (pdf.text_quality ?? null) as any,
+        pages: pagesArr,
+      });
+    };
+
     for (const page of pages) {
       const title = page.title || page.canonical_url || page.page_url;
       const uri = page.canonical_url || page.page_url;
       const canonicalUrl = page.canonical_url || null;
       const originalUrl = page.page_url || null;
       const pageText = page.main_text || "";
+      console.log(`[IngestionWorker] Processing page: ${title?.substring(0, 50)}, text length: ${pageText?.length ?? 0}`);
       if (pageText.trim()) {
+        console.log(`[IngestionWorker] Creating KnowledgeSource for: ${uri?.substring(0, 80)}`);
         const source = await this.upsertKnowledgeSource({
           chatbotId: args.chatbotId,
           label: title,
@@ -301,7 +365,8 @@ export class IngestionWorker {
           jobId: args.jobId,
         });
 
-        stagedChunks += await this.stageWebLikeSource({
+        console.log(`[IngestionWorker] KnowledgeSource created with id: ${source.id}`);
+        const chunks = await this.stageWebLikeSource({
           jobId: args.jobId,
           chatbotId: args.chatbotId,
           knowledgeSourceId: source.id,
@@ -314,53 +379,23 @@ export class IngestionWorker {
           textQuality: null,
           content: pageText,
         });
+        console.log(`[IngestionWorker] Staged ${chunks} chunks for source ${source.id}`);
+        stagedChunks += chunks;
       }
 
       const pdfs = page.pdfs;
       if (pdfs && Array.isArray(pdfs)) {
         for (const pdf of pdfs) {
-          const pdfTitle = pdf.title || pdf.pdf_url || "PDF-Dokument";
-          const pdfUri = pdf.pdf_url;
-          const pagesArr = (pdf.pages || []).map((p) => ({ pageNo: p.page_no, text: p.text }));
-
-          if (!pagesArr.length && !pdf.perplexity_content) continue;
-
-          const pdfSource = await this.upsertKnowledgeSource({
-            chatbotId: args.chatbotId,
-            label: pdfTitle,
-            uri: pdfUri,
-            canonicalUrl: pdfUri,
-            originalUrl: pdfUri,
-            extractionMethod: (pdf.extraction_method ?? null) as any,
-            textQuality: null,
-            type: "FILE",
-            metadata: {
-              fetchedAt: page.fetched_at,
-              pageCount: pdf.overall?.page_count,
-              sourcePage: uri,
-            },
-            jobId: args.jobId,
-          });
-
-          if (pdf.perplexity_content) {
-            // We cannot produce page anchors from a flat Perplexity blob -> hard fail.
-            throw new Error(`PDF ${pdfUri} missing pages[]; cannot generate required page anchors`);
-          }
-
-          stagedChunks += await this.stagePdfSource({
-            jobId: args.jobId,
-            chatbotId: args.chatbotId,
-            knowledgeSourceId: pdfSource.id,
-            title: pdfTitle,
-            uri: pdfUri,
-            canonicalUrl: pdfUri,
-            originalUrl: pdfUri,
-            extractionMethod: (pdf.extraction_method ?? null) as any,
-            textQuality: null,
-            pages: pagesArr,
-          });
+          stagedChunks += await ingestPdf(pdf, { sourcePage: uri, fetchedAt: page.fetched_at });
         }
       }
+    }
+
+    for (const pdf of pdfItems) {
+      stagedChunks += await ingestPdf(pdf, {
+        sourcePage: pdf.source_page ?? null,
+        fetchedAt: pdf.fetched_at ?? null,
+      });
     }
 
     if (stagedChunks === 0) {

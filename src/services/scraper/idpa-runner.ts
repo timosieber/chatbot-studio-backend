@@ -107,7 +107,7 @@ class IdpaScraperRunner {
       const raw = await readFile(path.join(datasetDir, file), "utf-8");
       try {
         const parsed = JSON.parse(raw);
-        if (parsed.type === "page") {
+        if (parsed?.type === "page" || parsed?.type === "pdf") {
           items.push(parsed as DatasetItem);
         }
       } catch (error) {

@@ -33,6 +33,7 @@ export interface DatasetPdf {
   source_page: string;
   pdf_url: string;
   title: string;
+  fetched_at?: string;
   http_head: {
     status: number;
     content_type: string;
@@ -50,7 +51,8 @@ export interface DatasetPdf {
     aborted_due_to_budget: boolean;
   };
   perplexity_content?: string;
-  extraction_method?: "pdfjs" | "perplexity";
+  extraction_method?: "pdfjs" | "perplexity" | "ocr" | "failed";
+  text_quality?: "ok" | "ocr_used" | "failed_quality";
 }
 
 export interface DatasetPage {
@@ -67,4 +69,4 @@ export interface DatasetPage {
   pdfs?: DatasetPdf[];
 }
 
-export type DatasetItem = DatasetPage;
+export type DatasetItem = DatasetPage | DatasetPdf;
