@@ -227,8 +227,10 @@ class FirecrawlRunner {
         "Firecrawl crawl raw response"
       );
 
-      if (!crawlResponse.success || !crawlResponse.data) {
-        logger.warn({ url, status: crawlResponse.status, response: crawlResponse }, "Firecrawl crawl unsuccessful");
+      // Firecrawl returns status: "completed" not success: true
+      const isSuccess = crawlResponse.success === true || crawlResponse.status === "completed";
+      if (!isSuccess || !crawlResponse.data) {
+        logger.warn({ url, status: crawlResponse.status, success: crawlResponse.success }, "Firecrawl crawl unsuccessful");
         return results;
       }
 
