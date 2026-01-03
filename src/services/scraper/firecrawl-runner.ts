@@ -1,0 +1,562 @@
+import FirecrawlApp from "@mendable/firecrawl-js";
+import pdfParse from "pdf-parse";
+import { env } from "../../config/env.js";
+import { logger } from "../../lib/logger.js";
+import type { DatasetItem, DatasetPage, DatasetPdf, DatasetPdfPage, ScrapeOptions } from "./types.js";
+
+// Firecrawl SDK response types
+interface FirecrawlDocument {
+  url?: string;
+  markdown?: string;
+  html?: string;
+  rawHtml?: string;
+  links?: string[];
+  metadata?: {
+    title?: string;
+    description?: string;
+    language?: string;
+    ogTitle?: string;
+    ogDescription?: string;
+    ogUrl?: string;
+    ogImage?: string;
+    ogSiteName?: string;
+    sourceURL?: string;
+    statusCode?: number;
+    [key: string]: unknown;
+  };
+}
+
+interface FirecrawlCrawlStatusResponse {
+  success: boolean;
+  status?: string;
+  completed?: number;
+  total?: number;
+  creditsUsed?: number;
+  expiresAt?: string;
+  data?: FirecrawlDocument[];
+}
+
+interface FirecrawlMapResponse {
+  success: boolean;
+  links?: string[];
+}
+
+interface FirecrawlScrapeResponse {
+  success: boolean;
+  markdown?: string;
+  html?: string;
+  links?: string[];
+  metadata?: FirecrawlDocument["metadata"];
+}
+
+class FirecrawlRunner {
+  private client: FirecrawlApp | null = null;
+
+  private getClient(): FirecrawlApp {
+    if (!this.client) {
+      if (!env.FIRECRAWL_API_KEY) {
+        throw new Error("FIRECRAWL_API_KEY is required for Firecrawl scraper");
+      }
+      this.client = new FirecrawlApp({ apiKey: env.FIRECRAWL_API_KEY });
+    }
+    return this.client;
+  }
+
+  /**
+   * Main entry point - complete scraping flow:
+   * 1. Map site to discover all URLs (pages + PDFs)
+   * 2. Crawl all HTML pages
+   * 3. Extract all PDFs
+   * 4. Return combined results for vector ingestion
+   */
+  async run(options: ScrapeOptions): Promise<DatasetItem[]> {
+    const client = this.getClient();
+    const results: DatasetItem[] = [];
+    const allPdfUrls = new Set<string>();
+
+    logger.info(
+      { startUrls: options.startUrls, maxDepth: options.maxDepth, maxPages: options.maxPages },
+      "🚀 Starting Firecrawl scrape pipeline"
+    );
+
+    for (const startUrl of options.startUrls) {
+      try {
+        // ═══════════════════════════════════════════════════════════════
+        // STEP 1: MAP - Discover all URLs on the site
+        // ═══════════════════════════════════════════════════════════════
+        logger.info({ startUrl }, "📍 Step 1: Mapping site to discover URLs...");
+        const mapResponse = await this.mapSite(client, startUrl, options);
+        const allUrls = mapResponse.links ?? [startUrl];
+
+        // Separate HTML pages from PDFs
+        const pageUrls = allUrls.filter(url => !this.isPdfUrl(url));
+        const pdfUrls = allUrls.filter(url => this.isPdfUrl(url));
+
+        pdfUrls.forEach(url => allPdfUrls.add(url));
+
+        logger.info(
+          { startUrl, totalUrls: allUrls.length, pages: pageUrls.length, pdfs: pdfUrls.length },
+          "📍 Map completed - URLs discovered"
+        );
+
+        // ═══════════════════════════════════════════════════════════════
+        // STEP 2: CRAWL - Scrape all HTML pages
+        // ═══════════════════════════════════════════════════════════════
+        logger.info({ startUrl, pageCount: pageUrls.length }, "📄 Step 2: Crawling HTML pages...");
+
+        const crawlResults = await this.crawlSite(client, startUrl, options);
+
+        // Collect any additional PDF links found during crawling
+        for (const result of crawlResults) {
+          if (result.type === "page") {
+            const page = result as DatasetPage;
+            const discoveredPdfs = (page.meta as any)?.discoveredPdfLinks as string[] | undefined;
+            if (discoveredPdfs) {
+              discoveredPdfs.forEach(url => allPdfUrls.add(url));
+            }
+          }
+        }
+
+        results.push(...crawlResults);
+        logger.info(
+          { startUrl, pagesScraped: crawlResults.length },
+          "📄 HTML crawl completed"
+        );
+
+      } catch (error) {
+        logger.error(
+          { startUrl, error: error instanceof Error ? error.message : String(error) },
+          "❌ Firecrawl failed for URL"
+        );
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // STEP 3: EXTRACT PDFs - Download and parse all discovered PDFs
+    // ═══════════════════════════════════════════════════════════════
+    if (allPdfUrls.size > 0) {
+      logger.info({ pdfCount: allPdfUrls.size }, "📑 Step 3: Extracting PDFs...");
+
+      const pdfResults = await this.extractPdfs(Array.from(allPdfUrls), options);
+      results.push(...pdfResults);
+
+      logger.info(
+        { totalPdfs: allPdfUrls.size, successfulPdfs: pdfResults.length },
+        "📑 PDF extraction completed"
+      );
+    }
+
+    logger.info(
+      { totalResults: results.length, pages: results.filter(r => r.type === "page").length, pdfs: results.filter(r => r.type === "pdf").length },
+      "✅ Firecrawl scrape pipeline completed"
+    );
+
+    return results;
+  }
+
+  private isPdfUrl(url: string): boolean {
+    const lower = url.toLowerCase();
+    return lower.endsWith(".pdf") || lower.includes(".pdf?") || lower.includes("/pdf/");
+  }
+
+  private async mapSite(
+    client: FirecrawlApp,
+    url: string,
+    options: ScrapeOptions
+  ): Promise<FirecrawlMapResponse> {
+    try {
+      const response = await client.map(url, {
+        includeSubdomains: false,
+        limit: options.maxPages ?? 100,
+      }) as unknown as FirecrawlMapResponse;
+
+      if (!response.success) {
+        logger.warn({ url }, "Firecrawl map returned unsuccessful");
+        return { success: false, links: [url] };
+      }
+
+      // Filter URLs based on include/exclude globs
+      let links = response.links ?? [];
+      if (options.includeGlobs?.length) {
+        links = links.filter((link) =>
+          options.includeGlobs!.some((glob) => this.matchGlob(link, glob))
+        );
+      }
+      if (options.excludeGlobs?.length) {
+        links = links.filter(
+          (link) => !options.excludeGlobs!.some((glob) => this.matchGlob(link, glob))
+        );
+      }
+
+      return { success: true, links };
+    } catch (error) {
+      logger.error({ url, error }, "Firecrawl map failed");
+      return { success: false, links: [url] };
+    }
+  }
+
+  private async crawlSite(
+    client: FirecrawlApp,
+    url: string,
+    options: ScrapeOptions
+  ): Promise<DatasetItem[]> {
+    const results: DatasetItem[] = [];
+
+    try {
+      const crawlOpts: Record<string, unknown> = {
+        limit: options.maxPages ?? 50,
+        maxDiscoveryDepth: options.maxDepth ?? 2,
+        scrapeOptions: {
+          formats: ["markdown", "html", "links"],
+          onlyMainContent: true,
+          includeTags: ["article", "main", "section", "div", "p", "h1", "h2", "h3", "h4", "ul", "ol", "li", "table"],
+          excludeTags: ["nav", "footer", "header", "aside", "script", "style", "noscript", "iframe"],
+        },
+      };
+      if (options.includeGlobs?.length) crawlOpts.includePaths = options.includeGlobs;
+      if (options.excludeGlobs?.length) crawlOpts.excludePaths = options.excludeGlobs;
+
+      const crawlResponse = await client.crawl(url, crawlOpts as any) as unknown as FirecrawlCrawlStatusResponse;
+
+      if (!crawlResponse.success || !crawlResponse.data) {
+        logger.warn({ url, status: crawlResponse.status }, "Firecrawl crawl unsuccessful");
+        return results;
+      }
+
+      logger.info(
+        { url, documentsReturned: crawlResponse.data.length, creditsUsed: crawlResponse.creditsUsed },
+        "Firecrawl crawl API response received"
+      );
+
+      for (const doc of crawlResponse.data) {
+        const converted = this.convertToDatasetPage(doc);
+        if (converted) {
+          results.push(converted);
+        }
+      }
+    } catch (error) {
+      logger.error({ url, error: error instanceof Error ? error.message : String(error) }, "Firecrawl crawl failed");
+    }
+
+    return results;
+  }
+
+  /**
+   * Extract text from PDFs by downloading and parsing them
+   */
+  private async extractPdfs(pdfUrls: string[], options: ScrapeOptions): Promise<DatasetPdf[]> {
+    const results: DatasetPdf[] = [];
+    const maxConcurrent = options.maxConcurrency ?? 3;
+
+    // Process PDFs in batches to avoid overwhelming the server
+    for (let i = 0; i < pdfUrls.length; i += maxConcurrent) {
+      const batch = pdfUrls.slice(i, i + maxConcurrent);
+      const batchResults = await Promise.all(
+        batch.map(url => this.extractSinglePdf(url))
+      );
+
+      for (const result of batchResults) {
+        if (result) {
+          results.push(result);
+        }
+      }
+
+      // Small delay between batches to be respectful
+      if (i + maxConcurrent < pdfUrls.length) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
+
+    return results;
+  }
+
+  private async extractSinglePdf(pdfUrl: string): Promise<DatasetPdf | null> {
+    const startTime = Date.now();
+
+    try {
+      logger.info({ pdfUrl }, "Downloading PDF...");
+
+      // Download PDF
+      const response = await fetch(pdfUrl, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (compatible; IDPA-Bot/1.0; +https://idpa.ch)",
+        },
+        signal: AbortSignal.timeout(60000), // 60s timeout
+      });
+
+      if (!response.ok) {
+        logger.warn({ pdfUrl, status: response.status }, "PDF download failed");
+        return null;
+      }
+
+      const contentType = response.headers.get("content-type") || "";
+      const contentLength = parseInt(response.headers.get("content-length") || "0", 10);
+      const lastModified = response.headers.get("last-modified");
+      const etag = response.headers.get("etag");
+
+      // Check if it's actually a PDF
+      if (!contentType.includes("pdf") && !pdfUrl.toLowerCase().endsWith(".pdf")) {
+        logger.warn({ pdfUrl, contentType }, "URL does not return PDF content");
+        return null;
+      }
+
+      // Size limit: 50MB
+      if (contentLength > 50 * 1024 * 1024) {
+        logger.warn({ pdfUrl, contentLength }, "PDF too large, skipping");
+        return null;
+      }
+
+      const buffer = Buffer.from(await response.arrayBuffer());
+
+      // Parse PDF
+      logger.info({ pdfUrl, bytes: buffer.length }, "Parsing PDF...");
+      const pdfData = await pdfParse(buffer);
+
+      // Extract text page by page (pdf-parse gives us full text, we'll split it)
+      const pages = this.splitPdfTextIntoPages(pdfData.text, pdfData.numpages);
+
+      const totalWords = pages.reduce((sum, p) => sum + p.text.split(/\s+/).length, 0);
+      const avgWordsPerPage = pdfData.numpages > 0 ? totalWords / pdfData.numpages : 0;
+
+      // Quality check
+      const textQuality = avgWordsPerPage >= 25 ? "ok" : "failed_quality";
+
+      const elapsedMs = Date.now() - startTime;
+      logger.info(
+        { pdfUrl, pages: pdfData.numpages, words: totalWords, quality: textQuality, elapsedMs },
+        "PDF parsed successfully"
+      );
+
+      const pdf: DatasetPdf = {
+        type: "pdf",
+        source_page: pdfUrl,
+        pdf_url: pdfUrl,
+        title: pdfData.info?.Title || this.extractTitleFromUrl(pdfUrl),
+        fetched_at: new Date().toISOString(),
+        http_head: {
+          status: response.status,
+          content_type: contentType,
+          content_length: contentLength || buffer.length,
+          last_modified: lastModified,
+          etag: etag,
+          accept_ranges: response.headers.get("accept-ranges"),
+        },
+        range_supported: response.headers.get("accept-ranges") === "bytes",
+        bytes_loaded: buffer.length,
+        pages,
+        overall: {
+          page_count: pdfData.numpages,
+          warnings: textQuality === "failed_quality" ? ["Low text density - may be scanned/image PDF"] : [],
+          aborted_due_to_budget: false,
+        },
+        extraction_method: "pdfjs",
+        text_quality: textQuality,
+      };
+
+      return pdf;
+
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error({ pdfUrl, error: message }, "PDF extraction failed");
+
+      // Return a failed PDF record so we track the attempt
+      return {
+        type: "pdf",
+        source_page: pdfUrl,
+        pdf_url: pdfUrl,
+        title: this.extractTitleFromUrl(pdfUrl),
+        fetched_at: new Date().toISOString(),
+        http_head: {
+          status: 0,
+          content_type: "application/pdf",
+          content_length: null,
+          last_modified: null,
+          etag: null,
+          accept_ranges: null,
+        },
+        range_supported: false,
+        bytes_loaded: 0,
+        pages: [],
+        overall: {
+          page_count: 0,
+          warnings: [`Extraction failed: ${message}`],
+          aborted_due_to_budget: false,
+        },
+        extraction_method: "failed",
+        text_quality: "failed_quality",
+      };
+    }
+  }
+
+  /**
+   * Split full PDF text into pages (approximation since pdf-parse doesn't give page breaks)
+   * We use form feed characters if present, otherwise estimate based on page count
+   */
+  private splitPdfTextIntoPages(fullText: string, numPages: number): DatasetPdfPage[] {
+    // pdf-parse sometimes includes form feed (\f) between pages
+    const pageTexts = fullText.split(/\f/);
+
+    if (pageTexts.length === numPages) {
+      // Perfect split
+      return pageTexts.map((text, i) => ({
+        page_no: i + 1,
+        text: text.trim(),
+      }));
+    }
+
+    if (pageTexts.length > 1) {
+      // Some form feeds found, use what we have
+      return pageTexts.filter(t => t.trim()).map((text, i) => ({
+        page_no: i + 1,
+        text: text.trim(),
+      }));
+    }
+
+    // No form feeds - return as single "page" or split by estimated length
+    if (numPages <= 1 || fullText.length < 5000) {
+      return [{
+        page_no: 1,
+        text: fullText.trim(),
+      }];
+    }
+
+    // Estimate ~3000 chars per page and split accordingly
+    const charsPerPage = Math.ceil(fullText.length / numPages);
+    const pages: DatasetPdfPage[] = [];
+    let remaining = fullText;
+    let pageNo = 1;
+
+    while (remaining.length > 0 && pageNo <= numPages) {
+      // Try to split at a paragraph boundary
+      let splitPoint = charsPerPage;
+      if (splitPoint < remaining.length) {
+        const paragraphBreak = remaining.lastIndexOf("\n\n", splitPoint + 500);
+        if (paragraphBreak > splitPoint - 500) {
+          splitPoint = paragraphBreak + 2;
+        }
+      }
+
+      const pageText = remaining.slice(0, splitPoint).trim();
+      if (pageText) {
+        pages.push({ page_no: pageNo, text: pageText });
+      }
+
+      remaining = remaining.slice(splitPoint);
+      pageNo++;
+    }
+
+    // Add any remaining text to the last page
+    if (remaining.trim() && pages.length > 0) {
+      const lastPage = pages[pages.length - 1];
+      if (lastPage) {
+        lastPage.text += "\n\n" + remaining.trim();
+      }
+    }
+
+    return pages;
+  }
+
+  private extractTitleFromUrl(url: string): string {
+    try {
+      const pathname = new URL(url).pathname;
+      const filename = pathname.split("/").pop() || "";
+      return decodeURIComponent(filename.replace(/\.pdf$/i, "").replace(/[-_]/g, " "));
+    } catch {
+      return "PDF Document";
+    }
+  }
+
+  private convertToDatasetPage(doc: FirecrawlDocument): DatasetPage | null {
+    const url = doc.url || doc.metadata?.sourceURL || doc.metadata?.ogUrl;
+    if (!url) {
+      logger.warn({ doc: JSON.stringify(doc).slice(0, 200) }, "Firecrawl document missing URL");
+      return null;
+    }
+
+    // Skip PDFs that might have been returned
+    if (this.isPdfUrl(url)) {
+      return null;
+    }
+
+    const mainText = doc.markdown || "";
+    if (!mainText.trim()) {
+      logger.warn({ url }, "Firecrawl document has no content");
+      return null;
+    }
+
+    const headings = this.extractHeadingsFromMarkdown(mainText);
+    const links = (doc.links ?? []).map((href) => ({
+      href,
+      canonical_href: href,
+      anchor_text: "",
+      context_snippet: "",
+    }));
+
+    // Collect PDF links for later extraction
+    const pdfLinks = (doc.links ?? []).filter((link) => this.isPdfUrl(link));
+
+    const page: DatasetPage = {
+      type: "page",
+      page_url: url,
+      canonical_url: doc.metadata?.ogUrl || url,
+      title: doc.metadata?.title || doc.metadata?.ogTitle || null,
+      main_text: mainText,
+      headings,
+      links,
+      fetched_at: new Date().toISOString(),
+      meta: {
+        description: doc.metadata?.description || doc.metadata?.ogDescription,
+        og: {
+          title: doc.metadata?.ogTitle,
+          description: doc.metadata?.ogDescription,
+          image: doc.metadata?.ogImage,
+          url: doc.metadata?.ogUrl,
+          siteName: doc.metadata?.ogSiteName,
+        },
+        statusCode: doc.metadata?.statusCode,
+        firecrawl: true,
+        discoveredPdfLinks: pdfLinks.length > 0 ? pdfLinks : undefined,
+      },
+      lang: {
+        declared: doc.metadata?.language,
+        detected: doc.metadata?.language,
+      },
+    };
+
+    return page;
+  }
+
+  private extractHeadingsFromMarkdown(markdown: string): { h1: string[]; h2: string[]; h3: string[] } {
+    const h1: string[] = [];
+    const h2: string[] = [];
+    const h3: string[] = [];
+
+    const lines = markdown.split("\n");
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("### ")) {
+        h3.push(trimmed.slice(4).trim());
+      } else if (trimmed.startsWith("## ")) {
+        h2.push(trimmed.slice(3).trim());
+      } else if (trimmed.startsWith("# ")) {
+        h1.push(trimmed.slice(2).trim());
+      }
+    }
+
+    return { h1, h2, h3 };
+  }
+
+  private matchGlob(url: string, glob: string): boolean {
+    const regexPattern = glob
+      .replace(/\*\*/g, ".*")
+      .replace(/\*/g, "[^/]*")
+      .replace(/\?/g, ".");
+    try {
+      return new RegExp(regexPattern).test(url);
+    } catch {
+      return false;
+    }
+  }
+}
+
+export const firecrawlRunner = new FirecrawlRunner();

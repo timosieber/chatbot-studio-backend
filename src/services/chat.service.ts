@@ -386,9 +386,11 @@ export class ChatService {
       if (rawMatches.length > 0 && hydrated.length === 0) {
         logger.error(
           { chatbotId, requestedTopK: topK, raw: rawMatches.length },
-          "All vector matches were non-hydratable; retrieval suppressed to avoid incorrect citations",
+          "All vector matches were non-hydratable (orphan vectors); returning empty to trigger unknown response",
         );
-        throw new Error("Vector store returned only non-hydratable (orphan) IDs; cannot produce citably correct retrieval");
+        // Return empty instead of throwing - this will trigger the "unknown" response
+        // which is better UX than an error. Orphan vectors should be cleaned up separately.
+        return [];
       }
 
       return hydrated;

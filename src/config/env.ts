@@ -50,6 +50,9 @@ const envSchema = z.object({
   // Apify run options (override actor defaults). Helps prevent 60s run timeouts.
   SCRAPER_APIFY_RUN_TIMEOUT_SECS: z.coerce.number().int().min(60).max(6 * 60 * 60).default(3600),
   SCRAPER_APIFY_RUN_MEMORY_MBYTES: z.coerce.number().int().min(128).max(32768).default(2048),
+  // Firecrawl configuration
+  FIRECRAWL_API_KEY: z.string().optional(),
+  SCRAPER_PROVIDER: z.enum(["firecrawl", "apify", "local"]).default("local"),
 });
 
 const parsed = envSchema.safeParse(process.env);

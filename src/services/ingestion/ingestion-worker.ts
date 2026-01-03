@@ -296,16 +296,26 @@ export class IngestionWorker {
     let stagedChunks = 0;
     const handledPdfUrls = new Set<string>();
 
+    const failedPdfs: Array<{ url: string; reason: string }> = [];
+
     const ingestPdf = async (pdf: DatasetPdf, context: { sourcePage?: string | null; fetchedAt?: string | null }) => {
       const pdfTitle = pdf.title || pdf.pdf_url || "PDF-Dokument";
       const pdfUri = pdf.pdf_url;
-      if (!pdfUri) return 0;
+      if (!pdfUri) {
+        logger.warn({ pdf: pdfTitle }, "PDF skipped: missing URL");
+        return 0;
+      }
 
       if (handledPdfUrls.has(pdfUri)) return 0;
       handledPdfUrls.add(pdfUri);
 
       const pagesArr = (pdf.pages || []).map((p) => ({ pageNo: p.page_no, text: p.text }));
-      if (!pagesArr.length && !pdf.perplexity_content) return 0;
+      if (!pagesArr.length && !pdf.perplexity_content) {
+        const reason = "PDF has no extractable text content";
+        logger.warn({ pdfUri, title: pdfTitle }, reason);
+        failedPdfs.push({ url: pdfUri, reason });
+        return 0;
+      }
 
       const pdfSource = await this.upsertKnowledgeSource({
         chatbotId: args.chatbotId,
@@ -324,9 +334,13 @@ export class IngestionWorker {
         jobId: args.jobId,
       });
 
-      if (pdf.perplexity_content) {
-        // We cannot produce page anchors from a flat Perplexity blob -> hard fail.
-        throw new Error(`PDF ${pdfUri} missing pages[]; cannot generate required page anchors`);
+      // Handle Perplexity flat content as a single-page fallback
+      if (pdf.perplexity_content && !pagesArr.length) {
+        logger.warn(
+          { pdfUri, method: "perplexity" },
+          "PDF has perplexity_content but no page structure; treating as single-page document"
+        );
+        pagesArr.push({ pageNo: 1, text: pdf.perplexity_content });
       }
 
       return await this.stagePdfSource({
@@ -396,6 +410,34 @@ export class IngestionWorker {
         sourcePage: pdf.source_page ?? null,
         fetchedAt: pdf.fetched_at ?? null,
       });
+    }
+
+    // Log summary of failed PDFs for debugging
+    if (failedPdfs.length > 0) {
+      logger.warn(
+        {
+          jobId: args.jobId,
+          chatbotId: args.chatbotId,
+          failedCount: failedPdfs.length,
+          failedPdfs: failedPdfs.slice(0, 10), // Limit to first 10 for log size
+          totalPdfs: handledPdfUrls.size
+        },
+        `Scrape job completed with ${failedPdfs.length} failed PDFs out of ${handledPdfUrls.size} total`
+      );
+
+      // Store failed PDF info in job metadata for user visibility
+      try {
+        await prisma.ingestionJob.update({
+          where: { id: args.jobId },
+          data: {
+            error: failedPdfs.length > 0
+              ? `${failedPdfs.length} PDF(s) konnten nicht verarbeitet werden: ${failedPdfs.slice(0, 3).map(p => p.url).join(", ")}${failedPdfs.length > 3 ? "..." : ""}`
+              : null
+          }
+        });
+      } catch (updateErr) {
+        logger.error({ err: updateErr, jobId: args.jobId }, "Failed to update job with PDF failure info");
+      }
     }
 
     if (stagedChunks === 0) {
