@@ -104,6 +104,42 @@ const RERANK_PROMPT = (query: string, docs: RankedContext[]) => {
 
 const DEFAULT_CHAT_MODEL = "gpt-4o-mini";
 
+// Small-talk patterns that should get a friendly response without RAG
+const SMALL_TALK_PATTERNS = [
+  /^(hallo|hi|hey|guten\s*(tag|morgen|abend)|grüezi|servus|moin|salü)[\s!.,?]*$/i,
+  /^(danke|vielen\s*dank|merci|thx|thanks)[\s!.,?]*$/i,
+  /^(tschüss|bye|auf\s*wiedersehen|ciao|ade)[\s!.,?]*$/i,
+  /^(wie\s*geht('?s)?|wie\s*gehts\s*dir|alles\s*klar)[\s!?,]*$/i,
+  /^(ok|okay|alles\s*klar|verstanden)[\s!.,?]*$/i,
+];
+
+const SMALL_TALK_RESPONSES = {
+  greeting: "Hallo! 👋 Wie kann ich Ihnen helfen? Stellen Sie mir gerne eine Frage.",
+  thanks: "Gerne geschehen! Kann ich Ihnen noch bei etwas anderem helfen?",
+  bye: "Auf Wiedersehen! Falls Sie weitere Fragen haben, bin ich jederzeit für Sie da.",
+  howAreYou: "Mir geht es gut, danke der Nachfrage! Wie kann ich Ihnen behilflich sein?",
+  ok: "Alles klar! Lassen Sie mich wissen, wenn Sie weitere Fragen haben.",
+} as const;
+
+type SmallTalkType = keyof typeof SMALL_TALK_RESPONSES;
+
+function detectSmallTalk(message: string): SmallTalkType | null {
+  const trimmed = message.trim();
+
+  // Greeting
+  if (SMALL_TALK_PATTERNS[0]!.test(trimmed)) return "greeting";
+  // Thanks
+  if (SMALL_TALK_PATTERNS[1]!.test(trimmed)) return "thanks";
+  // Bye
+  if (SMALL_TALK_PATTERNS[2]!.test(trimmed)) return "bye";
+  // How are you
+  if (SMALL_TALK_PATTERNS[3]!.test(trimmed)) return "howAreYou";
+  // Ok/understood
+  if (SMALL_TALK_PATTERNS[4]!.test(trimmed)) return "ok";
+
+  return null;
+}
+
 const QUERY_REWRITE_PROMPT = (question: string) =>
   [
     "Du bist ein Suchassistent für eine Wissensbasis.",
@@ -138,6 +174,23 @@ export class ChatService {
 
     const history = await messageService.getRecentMessages(session.id);
     await messageService.logMessage(session.id, "user", content);
+
+    // Check for small-talk before doing RAG
+    const smallTalkType = detectSmallTalk(content);
+    if (smallTalkType) {
+      const debugId = randomUUID();
+      const responseText = SMALL_TALK_RESPONSES[smallTalkType];
+      const result: RagResponse = {
+        claims: [{ text: responseText, supporting_chunk_ids: [] }],
+        unknown: false,
+        debug_id: debugId,
+        context_truncated: false,
+        sources: [],
+      };
+      await messageService.logMessage(session.id, "assistant", JSON.stringify(result));
+      logger.info({ debugId, smallTalkType, message: content }, "Small-talk detected, returning friendly response");
+      return result;
+    }
 
     const bot = await this.getChatbot(session.chatbotId);
 
@@ -239,6 +292,21 @@ export class ChatService {
     message: string;
     history?: Array<{ role: "user" | "assistant"; content: string }>;
   }): Promise<RagResponse> {
+    // Check for small-talk before doing RAG
+    const smallTalkType = detectSmallTalk(message);
+    if (smallTalkType) {
+      const debugId = randomUUID();
+      const responseText = SMALL_TALK_RESPONSES[smallTalkType];
+      logger.info({ debugId, smallTalkType, message }, "Small-talk detected, returning friendly response");
+      return {
+        claims: [{ text: responseText, supporting_chunk_ids: [] }],
+        unknown: false,
+        debug_id: debugId,
+        context_truncated: false,
+        sources: [],
+      };
+    }
+
     const bot = await this.getChatbot(chatbotId);
 
     const vectorMatches = await this.retrieveCandidates({ chatbotId, question: message });
