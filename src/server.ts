@@ -10,6 +10,7 @@ import { ingestionWorker } from "./services/ingestion/ingestion-worker.js";
 import { provisioningEventsService } from "./services/provisioning-events.service.js";
 import { apiRateLimiter } from "./middleware/rate-limit.js";
 import { errorHandler } from "./middleware/error-handler.js";
+import voiceRouter from "./routes/voice.routes.js";
 import { requireDashboardAuth } from "./middleware/require-auth.js";
 import { prisma } from "./lib/prisma.js";
 import { logger } from "./lib/logger.js";
@@ -70,6 +71,9 @@ export const buildServer = (): Express => {
   );
 
   app.use("/api", apiRateLimiter);
+
+  // Voice routes (with own rate limiting, no JSON body parsing needed)
+  app.use("/api/voice", voiceRouter);
 
   const makeBot = (bot: any) => ({
     id: bot.id,

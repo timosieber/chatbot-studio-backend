@@ -53,6 +53,12 @@ const envSchema = z.object({
   // Firecrawl configuration
   FIRECRAWL_API_KEY: z.string().optional(),
   SCRAPER_PROVIDER: z.enum(["firecrawl", "apify", "local"]).default("local"),
+  // Voice configuration (OpenAI Whisper + TTS)
+  OPENAI_TTS_MODEL: z.string().default("tts-1"),
+  OPENAI_TTS_VOICE: z.enum(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]).default("nova"),
+  OPENAI_WHISPER_MODEL: z.string().default("whisper-1"),
+  VOICE_MAX_AUDIO_SIZE_MB: z.coerce.number().default(25),
+  VOICE_MAX_RESPONSE_CHARS: z.coerce.number().default(4096),
 });
 
 const parsed = envSchema.safeParse(process.env);

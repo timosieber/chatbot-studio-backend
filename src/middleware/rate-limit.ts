@@ -16,3 +16,11 @@ export const widgetRateLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: "Chatbot: Zu viele Anfragen von dieser IP – bitte kurz warten." },
 });
+
+export const voiceRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 10, // Voice requests are expensive - stricter limit
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Voice: Zu viele Anfragen von dieser IP – bitte kurz warten." },
+});
