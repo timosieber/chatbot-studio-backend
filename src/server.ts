@@ -70,51 +70,6 @@ export const buildServer = (): Express => {
     }),
   );
 
-  // TEMPORARY DEBUG: Liste alle Chatbots und URLs (entfernen nach Analyse!)
-  app.get("/api/debug/all-sources", async (_req, res) => {
-    try {
-      const chatbots = await prisma.chatbot.findMany({
-        include: {
-          knowledgeSources: {
-            select: {
-              id: true,
-              type: true,
-              label: true,
-              canonicalUrl: true,
-              originalUrl: true,
-              status: true,
-              createdAt: true,
-            },
-          },
-          _count: {
-            select: { knowledgeSources: true },
-          },
-        },
-      });
-
-      const summary = {
-        totalChatbots: chatbots.length,
-        totalSources: await prisma.knowledgeSource.count(),
-        urlSources: await prisma.knowledgeSource.count({ where: { type: "URL" } }),
-        readySources: await prisma.knowledgeSource.count({ where: { status: "READY" } }),
-        failedSources: await prisma.knowledgeSource.count({ where: { status: "FAILED" } }),
-      };
-
-      res.json({
-        summary,
-        chatbots: chatbots.map((bot) => ({
-          id: bot.id,
-          name: bot.name,
-          status: bot.status,
-          sourceCount: bot._count.knowledgeSources,
-          sources: bot.knowledgeSources,
-        })),
-      });
-    } catch (err) {
-      res.status(500).json({ error: String(err) });
-    }
-  });
-
   app.use("/api", apiRateLimiter);
 
   // Voice routes (with own rate limiting, no JSON body parsing needed)
