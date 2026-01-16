@@ -56,12 +56,31 @@ class VoiceService {
 
     // Convert mime type to file extension
     const ext = this.mimeToExtension(mimeType);
+
+    logger.info(
+      { mimeType, extension: ext, bufferSize: audioBuffer.length },
+      "Preparing audio for transcription"
+    );
+
     // Convert Buffer to ArrayBuffer for File constructor compatibility
     const arrayBuffer = audioBuffer.buffer.slice(
       audioBuffer.byteOffset,
       audioBuffer.byteOffset + audioBuffer.byteLength
     ) as ArrayBuffer;
-    const file = new File([arrayBuffer], `audio.${ext}`, { type: mimeType });
+
+    // Use a supported mime type for the File object
+    const supportedMimeTypes: Record<string, string> = {
+      webm: "audio/webm",
+      mp3: "audio/mpeg",
+      mp4: "audio/mp4",
+      m4a: "audio/m4a",
+      wav: "audio/wav",
+      ogg: "audio/ogg",
+      oga: "audio/ogg",
+      flac: "audio/flac",
+    };
+    const fileMimeType = supportedMimeTypes[ext] || "audio/webm";
+    const file = new File([arrayBuffer], `audio.${ext}`, { type: fileMimeType });
 
     try {
       const response = await this.client.audio.transcriptions.create({
@@ -81,9 +100,10 @@ class VoiceService {
         language: response.language,
         duration: response.duration,
       };
-    } catch (error) {
-      logger.error({ error }, "Whisper transcription failed");
-      throw new ServiceUnavailableError("Audio transcription failed");
+    } catch (error: any) {
+      const errorMessage = error?.error?.message || error?.message || "Unknown error";
+      logger.error({ error, errorMessage, mimeType, ext }, "Whisper transcription failed");
+      throw new ServiceUnavailableError(`Audio transcription failed: ${errorMessage}`);
     }
   }
 
@@ -133,18 +153,32 @@ class VoiceService {
   }
 
   private mimeToExtension(mimeType: string): string {
+    // Normalize mime type (remove codecs and parameters)
+    const baseMimeType = mimeType.toLowerCase().split(";")[0]?.trim() || "audio/webm";
+
     const mapping: Record<string, string> = {
       "audio/webm": "webm",
-      "audio/webm;codecs=opus": "webm",
       "audio/mp3": "mp3",
       "audio/mpeg": "mp3",
       "audio/mp4": "mp4",
       "audio/m4a": "m4a",
+      "audio/x-m4a": "m4a",
       "audio/wav": "wav",
       "audio/x-wav": "wav",
+      "audio/wave": "wav",
       "audio/ogg": "ogg",
+      "audio/oga": "oga",
+      "audio/flac": "flac",
+      "audio/x-flac": "flac",
+      "video/webm": "webm", // Sometimes browsers report video/webm for audio-only
+      "application/octet-stream": "webm", // Fallback for unknown types
     };
-    return mapping[mimeType.toLowerCase()] || "webm";
+
+    const ext = mapping[baseMimeType];
+    if (!ext) {
+      logger.warn({ mimeType, baseMimeType }, "Unknown audio mime type, falling back to webm");
+    }
+    return ext || "webm";
   }
 }
 

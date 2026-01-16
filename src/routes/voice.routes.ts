@@ -169,13 +169,14 @@ router.post("/message", async (req: Request, res: Response, next: NextFunction) 
       return res.status(400).json({ error: "Keine Audiodaten empfangen" });
     }
 
+    // Step 1: Transcribe audio
+    const contentType = req.header("content-type") || "audio/webm";
+
     logger.info(
-      { sessionId: queryParams.sessionId, audioSize: audioBuffer.length },
+      { sessionId: queryParams.sessionId, audioSize: audioBuffer.length, contentType },
       "Voice message received"
     );
 
-    // Step 1: Transcribe audio
-    const contentType = req.header("content-type") || "audio/webm";
     const transcription = await voiceService.transcribe(audioBuffer, contentType);
 
     if (!transcription.text.trim()) {
