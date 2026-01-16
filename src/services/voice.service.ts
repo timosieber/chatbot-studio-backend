@@ -2,6 +2,11 @@ import OpenAI, { toFile } from "openai";
 import { env } from "../config/env.js";
 import { logger } from "../lib/logger.js";
 
+// WebM magic bytes (EBML header)
+const WEBM_MAGIC = Buffer.from([0x1a, 0x45, 0xdf, 0xa3]);
+// Ogg magic bytes
+const OGG_MAGIC = Buffer.from([0x4f, 0x67, 0x67, 0x53]); // "OggS"
+
 export interface TranscriptionResult {
   text: string;
   language?: string;
@@ -39,6 +44,50 @@ class VoiceService {
   }
 
   /**
+   * Detect actual file format from magic bytes
+   */
+  private detectFormat(buffer: Buffer): { ext: string; mime: string } | null {
+    if (buffer.length < 4) return null;
+
+    const header = buffer.subarray(0, 4);
+
+    // Check for WebM/Matroska (EBML header)
+    if (header.compare(WEBM_MAGIC) === 0) {
+      return { ext: "webm", mime: "audio/webm" };
+    }
+
+    // Check for Ogg
+    if (header.compare(OGG_MAGIC) === 0) {
+      return { ext: "ogg", mime: "audio/ogg" };
+    }
+
+    // Check for RIFF/WAV
+    if (buffer.length >= 12) {
+      const riff = buffer.subarray(0, 4).toString("ascii");
+      const wave = buffer.subarray(8, 12).toString("ascii");
+      if (riff === "RIFF" && wave === "WAVE") {
+        return { ext: "wav", mime: "audio/wav" };
+      }
+    }
+
+    // Check for MP3 (ID3 tag or sync word)
+    const b0 = header[0] ?? 0;
+    const b1 = header[1] ?? 0;
+    const b2 = header[2] ?? 0;
+    if ((b0 === 0x49 && b1 === 0x44 && b2 === 0x33) || // ID3
+        (b0 === 0xff && (b1 & 0xe0) === 0xe0)) { // MP3 sync
+      return { ext: "mp3", mime: "audio/mpeg" };
+    }
+
+    // Check for FLAC
+    if (header.toString("ascii") === "fLaC") {
+      return { ext: "flac", mime: "audio/flac" };
+    }
+
+    return null;
+  }
+
+  /**
    * Transcribe audio to text using OpenAI Whisper
    */
   async transcribe(audioBuffer: Buffer, mimeType: string): Promise<TranscriptionResult> {
@@ -54,18 +103,34 @@ class VoiceService {
       );
     }
 
-    // Convert mime type to file extension
-    const ext = this.mimeToExtension(mimeType);
+    // Detect actual format from magic bytes
+    const detected = this.detectFormat(audioBuffer);
+    const headerHex = audioBuffer.subarray(0, 16).toString("hex");
 
-    logger.info(
-      { mimeType, extension: ext, bufferSize: audioBuffer.length },
-      "Preparing audio for transcription"
-    );
+    // Use detected format or fall back to mime type
+    let ext: string;
+    let actualMime: string;
+
+    if (detected) {
+      ext = detected.ext;
+      actualMime = detected.mime;
+      logger.info(
+        { mimeType, detectedFormat: detected, headerHex, bufferSize: audioBuffer.length },
+        "Audio format detected from magic bytes"
+      );
+    } else {
+      ext = this.mimeToExtension(mimeType);
+      actualMime = ext === "webm" ? "audio/webm" : `audio/${ext}`;
+      logger.warn(
+        { mimeType, headerHex, bufferSize: audioBuffer.length },
+        "Could not detect format from magic bytes, using mime type"
+      );
+    }
 
     try {
       // Use OpenAI's toFile helper for proper file handling
       const file = await toFile(audioBuffer, `audio.${ext}`, {
-        type: ext === "webm" ? "audio/webm" : `audio/${ext}`,
+        type: actualMime,
       });
 
       const response = await this.client.audio.transcriptions.create({
@@ -87,7 +152,10 @@ class VoiceService {
       };
     } catch (error: any) {
       const errorMessage = error?.error?.message || error?.message || "Unknown error";
-      logger.error({ error, errorMessage, mimeType, ext }, "Whisper transcription failed");
+      logger.error(
+        { error, errorMessage, mimeType, ext, actualMime, headerHex, bufferSize: audioBuffer.length },
+        "Whisper transcription failed"
+      );
       throw new ServiceUnavailableError(`Audio transcription failed: ${errorMessage}`);
     }
   }
