@@ -70,6 +70,39 @@ export const buildServer = (): Express => {
     }),
   );
 
+  // Debug endpoint to check job status and sources
+  app.get("/api/debug/job-status/:jobId", async (req, res) => {
+    try {
+      const job = await prisma.ingestionJob.findUnique({ where: { id: req.params.jobId } });
+      const sourceCount = await prisma.knowledgeSource.count({ where: { chatbotId: job?.chatbotId } });
+      const pdfSources = await prisma.knowledgeSource.findMany({
+        where: { chatbotId: job?.chatbotId },
+        select: { label: true, canonicalUrl: true, type: true, status: true },
+        orderBy: { createdAt: "desc" },
+        take: 20,
+      });
+      res.json({ job, sourceCount, recentSources: pdfSources });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  // Trigger rescrape
+  app.post("/api/debug/rescrape/:chatbotId", async (req, res) => {
+    const secret = req.headers["x-admin-secret"];
+    if (secret !== "temp-2024-rescrape") return res.status(401).json({ error: "Unauthorized" });
+    try {
+      const { jobId } = await knowledgeService.startScrapeIngestion(req.params.chatbotId, {
+        startUrls: [req.body.url || "https://www.maximumm.ch"],
+        maxDepth: req.body.maxDepth ?? 3,
+        maxPages: req.body.maxPages ?? 300,
+      });
+      res.json({ status: "PENDING", jobId });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
   app.use("/api", apiRateLimiter);
 
   // Voice routes (with own rate limiting, no JSON body parsing needed)
