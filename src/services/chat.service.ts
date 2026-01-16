@@ -574,7 +574,7 @@ export class ChatService {
     const schemaExample = {
       claims: [
         {
-          text: "Hier steht eine vollständige, natürlich formulierte Antwort auf die Frage. Die Antwort fasst die relevanten Informationen aus dem Kontext zusammen und erklärt sie verständlich.",
+          text: "Hier steht eine vollständige, natürlich formulierte Antwort auf die Frage. Wenn es relevante Dokumente gibt, werden diese direkt verlinkt: Das Anmeldeformular finden Sie hier: https://example.com/formular.pdf",
           supporting_chunk_ids: ["chunk_abc123"],
         },
       ],
@@ -603,12 +603,19 @@ export class ChatService {
       "6. supporting_chunk_ids dürfen NUR aus dieser Whitelist stammen:",
       JSON.stringify(args.allowedChunkIds),
       "",
+      "LINKS UND DOKUMENTE:",
+      "- WICHTIG: Wenn im Kontext URLs zu PDFs, Formularen, Downloads oder relevanten Seiten stehen, füge diese DIREKT in deine Antwort ein!",
+      "- Formuliere es natürlich, z.B.: 'Das Anmeldeformular finden Sie hier: [URL]' oder 'Weitere Informationen: [URL]'",
+      "- Die URLs findest du im Kontext unter 'URL:' - verwende diese exakt so wie angegeben.",
+      "- Bei PDFs oder Dokumenten: Erwähne sie aktiv, wenn sie zur Frage passen.",
+      "",
       "ANTWORT-STIL:",
       "- Antworte freundlich und professionell.",
       "- Fasse mehrere Quellen zu EINER zusammenhängenden Antwort zusammen.",
       "- Vermeide: 'Laut Quelle X...' oder 'Der Text sagt...'.",
       "- Stattdessen: Erkläre die Information direkt und natürlich.",
       "- Bei mehreren relevanten Punkten: Strukturiere die Antwort logisch.",
+      "- Wenn es hilfreiche Links gibt: Biete sie am Ende der Antwort an.",
       "",
       "Schema (Beispiele):",
       JSON.stringify(schemaExample, null, 2),
