@@ -140,16 +140,25 @@ function detectSmallTalk(message: string): SmallTalkType | null {
   return null;
 }
 
-const QUERY_REWRITE_PROMPT = (question: string) =>
+const QUERY_REWRITE_PROMPT = (question: string, conversationContext?: string) =>
   [
     "Du bist ein Suchassistent für eine Wissensbasis.",
     "Formuliere aus der Nutzerfrage eine präzise Suchanfrage (Keywords) für Vektor-Suche.",
+    "",
     "Regeln:",
     "- Antworte NUR mit einer einzigen Zeile (keine Anführungszeichen, keine Aufzählung).",
     "- Nutze 5–12 Keywords/Begriffe, inkl. Synonyme falls sinnvoll.",
     "- Behalte Eigennamen/Domain/Produktnamen bei.",
+    "- WICHTIG: Wenn die Frage sich auf vorherige Themen bezieht (z.B. 'das', 'es', 'davon'), beziehe den Kontext ein!",
     "",
-    `Nutzerfrage: ${question}`,
+    ...(conversationContext
+      ? [
+          "Vorheriger Konversationskontext (letzte Themen):",
+          conversationContext,
+          "",
+        ]
+      : []),
+    `Aktuelle Nutzerfrage: ${question}`,
     "",
     "Suchanfrage:",
   ].join("\n");
@@ -194,10 +203,14 @@ export class ChatService {
 
     const bot = await this.getChatbot(session.chatbotId);
 
+    // Build conversation context for query rewriting (helps with follow-up questions)
+    const conversationContext = this.buildConversationContext(history);
+
     // Stage 1: Vector search (mit Query-Rewrite + Relevanz-Gate)
     const vectorMatches = await this.retrieveCandidates({
       chatbotId: session.chatbotId,
       question: content,
+      conversationContext,
     });
 
     // Stage 2: Re-rank (LLM-based fallback)
@@ -396,10 +409,10 @@ export class ChatService {
     return Math.max(0, Math.min(1, score));
   }
 
-  private async rewriteQuery(question: string): Promise<string> {
+  private async rewriteQuery(question: string, conversationContext?: string): Promise<string> {
     if (!env.RAG_ENABLE_QUERY_REWRITE) return question;
     try {
-      const res = await this.rewriteModel.invoke([{ role: "user", content: QUERY_REWRITE_PROMPT(question) }]);
+      const res = await this.rewriteModel.invoke([{ role: "user", content: QUERY_REWRITE_PROMPT(question, conversationContext) }]);
       const text = typeof res.content === "string"
         ? res.content
         : Array.isArray(res.content)
@@ -412,8 +425,8 @@ export class ChatService {
     }
   }
 
-  private async retrieveCandidates({ chatbotId, question }: { chatbotId: string; question: string }) {
-    const query = await this.rewriteQuery(question);
+  private async retrieveCandidates({ chatbotId, question, conversationContext }: { chatbotId: string; question: string; conversationContext?: string | undefined }) {
+    const query = await this.rewriteQuery(question, conversationContext);
     const queryVector = await this.embeddings.embed(query);
     const targetHydrated = 20;
     let topK = 20;
@@ -807,6 +820,28 @@ export class ChatService {
       hydrated.push({ id: c.chunkId, score: m.score, metadata: meta, content: c.canonicalText });
     }
     return hydrated;
+  }
+
+  /**
+   * Builds a brief conversation context summary for query rewriting.
+   * This helps the query rewriter understand what topics were discussed
+   * so follow-up questions like "How much does it cost?" can be contextualized.
+   */
+  private buildConversationContext(history: Message[]): string | undefined {
+    if (!history.length) return undefined;
+
+    // Take last 4 messages (2 exchanges) for context
+    const recentHistory = history.slice(-4);
+    const contextParts: string[] = [];
+
+    for (const msg of recentHistory) {
+      const readable = this.extractReadableContent(msg.content, msg.role);
+      // Truncate to keep context brief
+      const truncated = readable.length > 150 ? readable.slice(0, 150) + "..." : readable;
+      contextParts.push(`${msg.role === "user" ? "Nutzer" : "Assistent"}: ${truncated}`);
+    }
+
+    return contextParts.join("\n");
   }
 
   /**
