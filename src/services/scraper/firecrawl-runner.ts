@@ -210,10 +210,10 @@ class FirecrawlRunner {
         limit: options.maxPages ?? 50,
         maxDiscoveryDepth: options.maxDepth ?? 2,
         scrapeOptions: {
-          formats: ["markdown", "html", "links"],
-          onlyMainContent: true,
-          includeTags: ["article", "main", "section", "div", "p", "h1", "h2", "h3", "h4", "ul", "ol", "li", "table"],
-          excludeTags: ["nav", "footer", "header", "aside", "script", "style", "noscript", "iframe"],
+          formats: ["markdown", "html", "rawHtml", "links"],
+          onlyMainContent: false, // Get full page to find all PDF links
+          includeTags: ["article", "main", "section", "div", "p", "h1", "h2", "h3", "h4", "ul", "ol", "li", "table", "a"],
+          excludeTags: ["script", "style", "noscript", "iframe"],
         },
       };
       if (options.includeGlobs?.length) crawlOpts.includePaths = options.includeGlobs;
@@ -454,6 +454,7 @@ class FirecrawlRunner {
     }
 
     const mainText = doc.markdown || "";
+    const rawHtml = doc.rawHtml || doc.html || "";
     if (!mainText.trim()) {
       logger.warn({ url }, "Firecrawl document has no content");
       return null;
@@ -467,8 +468,16 @@ class FirecrawlRunner {
       context_snippet: "",
     }));
 
-    // Collect PDF links for later extraction
+    // Collect PDF links from both the links array and by scanning HTML/markdown for PDF URLs
     const pdfLinks = (doc.links ?? []).filter((link) => this.isPdfUrl(link));
+
+    // Also extract PDF links from raw HTML and markdown (catches links Firecrawl might miss)
+    const extractedPdfLinks = this.extractPdfLinksFromContent(rawHtml + " " + mainText, url);
+    extractedPdfLinks.forEach(link => {
+      if (!pdfLinks.includes(link)) {
+        pdfLinks.push(link);
+      }
+    });
 
     const page: DatasetPage = {
       type: "page",
@@ -531,6 +540,75 @@ class FirecrawlRunner {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Extract PDF links from HTML content and markdown
+   * This catches PDF links that Firecrawl's link extraction might miss
+   */
+  private extractPdfLinksFromContent(content: string, baseUrl: string): string[] {
+    const pdfLinks: string[] = [];
+
+    // Patterns to find PDF URLs in content
+    const patterns = [
+      // href="...pdf"
+      /href=["']([^"']*\.pdf[^"']*)/gi,
+      // src="...pdf"
+      /src=["']([^"']*\.pdf[^"']*)/gi,
+      // data-href="...pdf"
+      /data-href=["']([^"']*\.pdf[^"']*)/gi,
+      // Markdown links [text](url.pdf)
+      /\]\(([^)]*\.pdf[^)]*)\)/gi,
+      // Plain URLs ending in .pdf
+      /(https?:\/\/[^\s"'<>]*\.pdf)/gi,
+      // Relative URLs like /sites/default/files/...pdf
+      /(\/sites\/default\/files\/[^\s"'<>]*\.pdf)/gi,
+      // Generic file paths with .pdf
+      /(\/[^\s"'<>]*\/[^\s"'<>]*\.pdf)/gi,
+    ];
+
+    const baseUrlObj = new URL(baseUrl);
+    const seenUrls = new Set<string>();
+
+    for (const pattern of patterns) {
+      let match;
+      while ((match = pattern.exec(content)) !== null) {
+        let pdfUrl = match[1];
+        if (!pdfUrl) continue;
+
+        // Clean up the URL
+        pdfUrl = pdfUrl.trim();
+
+        // Skip data URIs
+        if (pdfUrl.startsWith("data:")) continue;
+
+        // Resolve relative URLs
+        try {
+          if (pdfUrl.startsWith("//")) {
+            pdfUrl = `${baseUrlObj.protocol}${pdfUrl}`;
+          } else if (pdfUrl.startsWith("/")) {
+            pdfUrl = `${baseUrlObj.origin}${pdfUrl}`;
+          } else if (!pdfUrl.startsWith("http")) {
+            pdfUrl = new URL(pdfUrl, baseUrl).href;
+          }
+
+          // Normalize and dedupe
+          const normalizedUrl = pdfUrl.split("#")[0] ?? pdfUrl; // Remove hash
+          if (normalizedUrl && !seenUrls.has(normalizedUrl) && this.isPdfUrl(normalizedUrl)) {
+            seenUrls.add(normalizedUrl);
+            pdfLinks.push(normalizedUrl);
+          }
+        } catch {
+          // Invalid URL, skip
+        }
+      }
+    }
+
+    if (pdfLinks.length > 0) {
+      logger.info({ baseUrl, pdfCount: pdfLinks.length, pdfs: pdfLinks.slice(0, 5) }, "Extracted PDF links from content");
+    }
+
+    return pdfLinks;
   }
 }
 
