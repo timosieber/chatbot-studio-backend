@@ -70,43 +70,6 @@ export const buildServer = (): Express => {
     }),
   );
 
-  // Debug endpoint to check job status and sources
-  app.get("/api/debug/job-status/:jobId", async (req, res) => {
-    try {
-      const job = await prisma.ingestionJob.findUnique({ where: { id: req.params.jobId } });
-      if (!job) return res.status(404).json({ error: "Job not found" });
-      const sourceCount = await prisma.knowledgeSource.count({ where: { chatbotId: job.chatbotId } });
-      const pdfSources = await prisma.knowledgeSource.findMany({
-        where: { chatbotId: job.chatbotId },
-        select: { label: true, canonicalUrl: true, type: true, status: true },
-        orderBy: { createdAt: "desc" },
-        take: 20,
-      });
-      res.json({ job, sourceCount, recentSources: pdfSources });
-    } catch (err) {
-      res.status(500).json({ error: String(err) });
-    }
-  });
-
-  // Add text source
-  app.post("/api/debug/add-text/:chatbotId", async (req, res) => {
-    const secret = req.headers["x-admin-secret"];
-    if (secret !== "temp-2024-rescrape") return res.status(401).json({ error: "Unauthorized" });
-    try {
-      const { title, content, canonicalUrl } = req.body;
-      const { jobId, knowledgeSourceId } = await knowledgeService.startTextIngestion(
-        "system-admin",
-        req.params.chatbotId,
-        title,
-        content,
-        { canonicalUrl }
-      );
-      res.json({ status: "PENDING", jobId, knowledgeSourceId });
-    } catch (err) {
-      res.status(500).json({ error: String(err) });
-    }
-  });
-
   app.use("/api", apiRateLimiter);
 
   // Voice routes (with own rate limiting, no JSON body parsing needed)
