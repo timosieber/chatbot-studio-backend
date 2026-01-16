@@ -247,7 +247,7 @@ export class ChatService {
       { role: "system" as const, content: systemPrompt },
       ...history.map((m: Message) => ({
         role: m.role === "assistant" ? ("assistant" as const) : ("user" as const),
-        content: m.content,
+        content: this.extractReadableContent(m.content, m.role),
       })),
       {
         role: "user" as const,
@@ -807,6 +807,44 @@ export class ChatService {
       hydrated.push({ id: c.chunkId, score: m.score, metadata: meta, content: c.canonicalText });
     }
     return hydrated;
+  }
+
+  /**
+   * Extracts readable text from message content.
+   * Assistant messages are stored as JSON (RagResponse), so we extract the claim texts.
+   * User messages are passed through as-is.
+   */
+  private extractReadableContent(content: string, role: string): string {
+    if (role !== "assistant") {
+      return content;
+    }
+
+    // Try to parse as JSON (RagResponse format)
+    try {
+      const parsed = JSON.parse(content);
+
+      // Extract text from claims array
+      if (parsed.claims && Array.isArray(parsed.claims)) {
+        const texts = parsed.claims
+          .map((claim: { text?: string }) => claim.text)
+          .filter((text: unknown): text is string => typeof text === "string" && text.length > 0);
+
+        if (texts.length > 0) {
+          return texts.join(" ");
+        }
+      }
+
+      // Handle unknown responses with reason
+      if (parsed.unknown && parsed.reason) {
+        return parsed.reason;
+      }
+
+      // Fallback: return original content
+      return content;
+    } catch {
+      // Not JSON, return as-is
+      return content;
+    }
   }
 
   private async getChatbot(chatbotId: string): Promise<{ id: string; name: string; description: string | null; systemPrompt: string | null; model: string | null }> {
