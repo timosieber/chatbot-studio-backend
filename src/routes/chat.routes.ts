@@ -15,7 +15,10 @@ const sessionSchema = z.object({
 
 const messageSchema = z.object({
   sessionId: z.string().min(8),
-  message: z.string().min(1),
+  message: z.string()
+    .min(1, "Nachricht darf nicht leer sein")
+    .max(2000, "Nachricht ist zu lang (max 2000 Zeichen)")
+    .refine(msg => msg.trim().length > 0, "Nachricht darf nicht nur Leerzeichen enthalten"),
 });
 
 router.post("/sessions", async (req, res, next) => {
