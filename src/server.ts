@@ -11,7 +11,8 @@ import { provisioningEventsService } from "./services/provisioning-events.servic
 import { apiRateLimiter } from "./middleware/rate-limit.js";
 import { errorHandler } from "./middleware/error-handler.js";
 import voiceRouter from "./routes/voice.routes.js";
-import { requireDashboardAuth } from "./middleware/require-auth.js";
+import { requireDashboardAuth, requireApprovedStatus } from "./middleware/require-auth.js";
+import { userService } from "./services/user.service.js";
 import { prisma } from "./lib/prisma.js";
 import { logger } from "./lib/logger.js";
 import { randomUUID } from "node:crypto";
@@ -95,7 +96,21 @@ export const buildServer = (): Express => {
     return bot;
   };
 
-  app.get("/api/chatbots", requireDashboardAuth, async (req, res) => {
+  // User info endpoint (returns user status for waitlist check)
+  app.get("/api/user/me", requireDashboardAuth, async (req, res) => {
+    try {
+      const user = await userService.getUser(req.user!.id);
+      if (!user) {
+        return res.status(404).json({ error: "Benutzer nicht gefunden" });
+      }
+      return res.json(user);
+    } catch (err) {
+      console.error("GET /api/user/me error:", err);
+      return res.status(500).json({ error: "Fehler beim Abrufen des Benutzers" });
+    }
+  });
+
+  app.get("/api/chatbots", requireDashboardAuth, requireApprovedStatus, async (req, res) => {
     try {
       const bots = await prisma.chatbot.findMany({
         where: { userId: req.user!.id },
@@ -108,7 +123,7 @@ export const buildServer = (): Express => {
     }
   });
 
-  app.post("/api/chatbots", requireDashboardAuth, async (req, res) => {
+  app.post("/api/chatbots", requireDashboardAuth, requireApprovedStatus, async (req, res) => {
     try {
       const name = req.body?.name || "RAG Assistant";
       const bot = await prisma.chatbot.create({
@@ -128,7 +143,7 @@ export const buildServer = (): Express => {
     }
   });
 
-  app.get("/api/chatbots/:id", requireDashboardAuth, async (req, res) => {
+  app.get("/api/chatbots/:id", requireDashboardAuth, requireApprovedStatus, async (req, res) => {
     try {
       const chatbotId = req.params.id;
       if (!chatbotId) return res.status(400).json({ error: "chatbotId required" });
@@ -143,7 +158,7 @@ export const buildServer = (): Express => {
     }
   });
 
-  app.patch("/api/chatbots/:id", requireDashboardAuth, async (req, res) => {
+  app.patch("/api/chatbots/:id", requireDashboardAuth, requireApprovedStatus, async (req, res) => {
     try {
       const chatbotId = req.params.id;
       if (!chatbotId) return res.status(400).json({ error: "chatbotId required" });
@@ -184,7 +199,7 @@ export const buildServer = (): Express => {
     }
   });
 
-  app.delete("/api/chatbots/:id", requireDashboardAuth, async (req, res) => {
+  app.delete("/api/chatbots/:id", requireDashboardAuth, requireApprovedStatus, async (req, res) => {
     const chatbotId = req.params.id;
     if (!chatbotId) return res.status(400).json({ error: "chatbotId required" });
 
@@ -268,7 +283,7 @@ export const buildServer = (): Express => {
   };
 
   // Knowledge routes (protected)
-  app.get("/api/knowledge/provisioning/stream", requireDashboardAuth, async (req, res) => {
+  app.get("/api/knowledge/provisioning/stream", requireDashboardAuth, requireApprovedStatus, async (req, res) => {
     const chatbotId = (req.query?.chatbotId as string) || "";
     if (!chatbotId) return res.status(400).json({ error: "chatbotId is required" });
 
@@ -316,7 +331,7 @@ export const buildServer = (): Express => {
     });
   });
 
-  app.get("/api/knowledge/sources", requireDashboardAuth, async (req, res, next) => {
+  app.get("/api/knowledge/sources", requireDashboardAuth, requireApprovedStatus, async (req, res, next) => {
     try {
       const chatbotId = (req.query?.chatbotId as string) || undefined;
       if (chatbotId) {
@@ -332,7 +347,7 @@ export const buildServer = (): Express => {
     }
   });
 
-  app.get("/api/knowledge/jobs/:id", requireDashboardAuth, async (req, res, next) => {
+  app.get("/api/knowledge/jobs/:id", requireDashboardAuth, requireApprovedStatus, async (req, res, next) => {
     try {
       const jobId = req.params.id;
       if (!jobId) return res.status(400).json({ error: "jobId is required" });
@@ -349,7 +364,7 @@ export const buildServer = (): Express => {
     }
   });
 
-  app.post("/api/knowledge/sources/scrape", requireDashboardAuth, async (req, res, next) => {
+  app.post("/api/knowledge/sources/scrape", requireDashboardAuth, requireApprovedStatus, async (req, res, next) => {
     try {
       const body = req.body || {};
       const rawUrl = body.url || body.link || (Array.isArray(body.startUrls) ? body.startUrls[0] : null);
@@ -405,7 +420,7 @@ export const buildServer = (): Express => {
     }
   });
 
-  app.post("/api/knowledge/sources/text", requireDashboardAuth, async (req, res, next) => {
+  app.post("/api/knowledge/sources/text", requireDashboardAuth, requireApprovedStatus, async (req, res, next) => {
     try {
       const { chatbotId, title, content, sourceKey, canonicalUrl, originalUrl, extractionMethod, textQuality } = req.body || {};
       if (!chatbotId) return res.status(400).json({ error: "chatbotId ist erforderlich" });
@@ -431,7 +446,7 @@ export const buildServer = (): Express => {
     }
   });
 
-  app.delete("/api/knowledge/sources/:id", requireDashboardAuth, async (req, res, next) => {
+  app.delete("/api/knowledge/sources/:id", requireDashboardAuth, requireApprovedStatus, async (req, res, next) => {
     try {
       const sourceId = req.params.id;
       if (!sourceId) return res.status(400).json({ error: "source id required" });
