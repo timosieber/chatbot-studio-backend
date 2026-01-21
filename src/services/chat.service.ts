@@ -77,8 +77,8 @@ const ragJsonAnswerSchema = z
 
 // Benutzerfreundliche Fehlermeldungen - natürlich und freundlich formuliert
 const UNKNOWN_MESSAGES = {
-  insufficient_context: "Gute Frage! Dazu habe ich leider keine Informationen in meiner Wissensdatenbank. Ich kann Ihnen aber gerne bei Fragen zu unseren Dienstleistungen, Kontaktmöglichkeiten oder Standorten weiterhelfen.",
-  off_topic: "Das ist eine interessante Frage, aber dazu kann ich Ihnen leider keine Auskunft geben. Mein Wissen beschränkt sich auf Informationen rund um Maximumm. Kann ich Ihnen dabei behilflich sein?",
+  insufficient_context: "Gute Frage! Dazu kann ich Ihnen leider keine Auskunft geben. Ich helfe Ihnen aber gerne bei Fragen zu unseren Dienstleistungen, Kontaktmöglichkeiten oder Standorten.",
+  off_topic: "Das ist eine interessante Frage, aber dazu kann ich Ihnen leider nicht weiterhelfen. Kann ich Ihnen stattdessen bei etwas anderem behilflich sein?",
 } as const;
 
 // Fallback-Kontaktinformation für unknown-Antworten
