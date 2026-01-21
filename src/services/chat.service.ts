@@ -75,14 +75,35 @@ const ragJsonAnswerSchema = z
     }
   });
 
-// Benutzerfreundliche Fehlermeldungen - natürlich und freundlich formuliert
+// Fallback message nur als letzte Reserve (wird normalerweise durch KI-generierte Antwort ersetzt)
 const UNKNOWN_MESSAGES = {
-  insufficient_context: "Gute Frage! Dazu kann ich Ihnen leider keine Auskunft geben. Ich helfe Ihnen aber gerne bei Fragen zu unseren Dienstleistungen, Kontaktmöglichkeiten oder Standorten.",
-  off_topic: "Das ist eine interessante Frage, aber dazu kann ich Ihnen leider nicht weiterhelfen. Kann ich Ihnen stattdessen bei etwas anderem behilflich sein?",
+  insufficient_context: "Dazu kann ich Ihnen leider keine Auskunft geben. Kann ich Ihnen bei etwas anderem helfen?",
+  off_topic: "Dazu kann ich Ihnen leider nicht weiterhelfen. Kann ich Ihnen bei etwas anderem behilflich sein?",
 } as const;
 
 // Fallback-Kontaktinformation für unknown-Antworten
 const CONTACT_FALLBACK = "\n\nSie können uns auch direkt kontaktieren:\n📞 Telefon: 062 918 10 30\n📧 E-Mail: info@maximumm.ch\n🌐 Kontaktformular: https://maximumm.ch/kontakt";
+
+// Prompt für natürliche Ablehnung bei Off-Topic-Fragen
+const OFF_TOPIC_RESPONSE_PROMPT = (question: string, botName: string) => `Du bist ein freundlicher Kundenservice-Assistent für ${botName}.
+
+Ein Kunde hat folgende Frage gestellt: "${question}"
+
+Diese Frage liegt AUSSERHALB deines Wissensbereichs (z.B. Wetter, Politik, allgemeine Fragen, etc.).
+Du darfst diese Frage NICHT beantworten, aber du sollst freundlich und natürlich reagieren.
+
+Deine Aufgabe:
+1. Gehe kurz auf die Frage ein (zeige, dass du sie verstanden hast)
+2. Erkläre freundlich, dass du dazu leider keine Auskunft geben kannst
+3. Biete an, bei anderen Themen zu helfen (Dienstleistungen, Kontakt, etc.)
+
+WICHTIG:
+- Klingt natürlich und menschlich, nicht wie eine Standardantwort
+- Maximal 2-3 Sätze
+- Erwähne NIEMALS Begriffe wie "Wissensdatenbank", "KI", "Datenbank", "System" oder "Kontext"
+- Antworte in der Sprache der Frage
+
+Antworte NUR mit dem Text, keine JSON-Formatierung.`;
 
 const UNKNOWN_ANSWER: RagJsonAnswer = {
   unknown: true,
@@ -335,11 +356,18 @@ export class ChatService {
     const debugId = randomUUID();
     const hardGate = this.applyHardGate({ hydrated: topContexts.length });
     if (!topContexts.length || !hardGate.allowed) {
-      const result = this.buildUnknownResponse({
-        debugId,
-        reason: hardGate.reason ?? UNKNOWN_ANSWER.reason!,
-      });
+      // Generate a natural, question-specific rejection using LLM
+      const naturalResponse = await this.generateOffTopicResponse(content, bot.name || "unser Unternehmen");
+      const result: RagResponse = {
+        claims: [{ text: naturalResponse + CONTACT_FALLBACK, supporting_chunk_ids: [] }],
+        unknown: true,
+        reason: "off_topic",
+        debug_id: debugId,
+        context_truncated: false,
+        sources: [],
+      };
       await messageService.logMessage(session.id, "assistant", JSON.stringify(result));
+      logger.info({ debugId, message: content }, "Off-topic question, returning natural rejection");
       return result;
     }
 
@@ -458,10 +486,17 @@ export class ChatService {
     const debugId = randomUUID();
     const hardGate = this.applyHardGate({ hydrated: topContexts.length });
     if (!topContexts.length || !hardGate.allowed) {
-      return this.buildUnknownResponse({
-        debugId,
-        reason: hardGate.reason ?? UNKNOWN_ANSWER.reason!,
-      });
+      // Generate a natural, question-specific rejection using LLM
+      const naturalResponse = await this.generateOffTopicResponse(message, bot.name || "unser Unternehmen");
+      logger.info({ debugId, message }, "Off-topic question, returning natural rejection");
+      return {
+        claims: [{ text: naturalResponse + CONTACT_FALLBACK, supporting_chunk_ids: [] }],
+        unknown: true,
+        reason: "off_topic",
+        debug_id: debugId,
+        context_truncated: false,
+        sources: [],
+      };
     }
 
     const { contextString, contextTruncated, allowedChunkIds } = this.buildContextString(topContexts);
@@ -948,6 +983,40 @@ export class ChatService {
       hydrated.push({ id: c.chunkId, score: m.score, metadata: meta, content: c.canonicalText });
     }
     return hydrated;
+  }
+
+  /**
+   * Generates a natural, question-specific response for off-topic questions.
+   * Instead of a generic "I can't answer that", the LLM acknowledges the specific
+   * question and politely declines in a conversational way.
+   */
+  private async generateOffTopicResponse(question: string, botName: string): Promise<string> {
+    try {
+      const chatModel = new ChatOpenAI({
+        model: env.OPENAI_COMPLETIONS_MODEL || DEFAULT_CHAT_MODEL,
+        temperature: 0.7, // Slightly higher for more natural variation
+      });
+
+      const response = await chatModel.invoke([
+        { role: "user", content: OFF_TOPIC_RESPONSE_PROMPT(question, botName) },
+      ]);
+
+      const text = typeof response.content === "string"
+        ? response.content
+        : Array.isArray(response.content)
+          ? response.content.map((c: any) => ("text" in c ? c.text : c)).join(" ")
+          : "";
+
+      const trimmed = text.trim();
+      if (trimmed.length > 10 && trimmed.length < 500) {
+        return trimmed;
+      }
+      // Fallback if response is too short or too long
+      return UNKNOWN_MESSAGES.off_topic;
+    } catch (err) {
+      logger.error({ err, question }, "Failed to generate off-topic response");
+      return UNKNOWN_MESSAGES.off_topic;
+    }
   }
 
   /**
