@@ -1,5 +1,6 @@
 import type { Chatbot, Message, Session } from "@prisma/client";
-import { ChatOpenAI } from "@langchain/openai";
+// Migrated from LangChain to direct OpenAI API
+import OpenAI from "openai";
 import { env } from "../config/env.js";
 import { getVectorStore } from "./vector-store/index.js";
 import { messageService } from "./message.service.js";
@@ -149,7 +150,7 @@ const RERANK_PROMPT = (query: string, docs: RankedContext[]) => {
   ].join("\n");
 };
 
-const DEFAULT_CHAT_MODEL = "gpt-4o-mini";
+const DEFAULT_CHAT_MODEL = "gpt-5.1";
 
 // Small-talk patterns that should get a friendly response without RAG (DE/EN/FR)
 // IMPORTANT: These patterns must match ONLY pure small-talk, not greetings followed by actual questions
@@ -337,13 +338,10 @@ export class ChatService {
   private readonly vectorStore = getVectorStore();
   private readonly embeddings = getEmbeddingsProvider();
   private readonly deterministic = env.RAG_DETERMINISTIC_LLM;
-  private readonly rerankModel = new ChatOpenAI({
-    model: env.OPENAI_COMPLETIONS_MODEL || DEFAULT_CHAT_MODEL,
-    temperature: this.deterministic ? 0 : 0.2,
-  });
-  private readonly rewriteModel = new ChatOpenAI({
-    model: env.OPENAI_COMPLETIONS_MODEL || DEFAULT_CHAT_MODEL,
-    temperature: this.deterministic ? 0 : 0.2,
+
+  // Shared OpenAI client (replaces LangChain ChatOpenAI instances)
+  private readonly client = new OpenAI({
+    apiKey: env.OPENAI_API_KEY,
   });
 
   async handleMessage(session: SessionWithChatbot, content: string): Promise<RagResponse> {
@@ -437,32 +435,28 @@ export class ChatService {
           "- Gib als Ausgabe NUR valides JSON im vorgegebenen Schema zurück.",
         ].join(" ");
 
-    const chatModel = new ChatOpenAI({
-      model: bot.model || env.OPENAI_COMPLETIONS_MODEL || DEFAULT_CHAT_MODEL,
-      temperature: this.deterministic ? 0 : 0.2,
-      modelKwargs: {
-        response_format: { type: "json_object" },
-      },
-    });
-
-    const messages = [
-      { role: "system" as const, content: systemPrompt },
+    // Build messages array for OpenAI Chat Completions API
+    const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+      { role: "system", content: systemPrompt },
       ...history.map((m: Message) => ({
         role: m.role === "assistant" ? ("assistant" as const) : ("user" as const),
         content: this.extractReadableContent(m.content, m.role),
       })),
       {
-        role: "user" as const,
+        role: "user",
         content: this.buildJsonAnswerPrompt({ question: content, contextString, allowedChunkIds }),
       },
     ];
 
-    const completion = await chatModel.invoke(messages);
-    const raw = typeof completion.content === "string"
-      ? completion.content
-      : Array.isArray(completion.content)
-        ? completion.content.map((c: any) => ("text" in c ? c.text : c)).join(" ")
-        : "";
+    // Call OpenAI Chat Completions API with JSON mode
+    const completion = await this.client.chat.completions.create({
+      model: bot.model || env.OPENAI_COMPLETIONS_MODEL || DEFAULT_CHAT_MODEL,
+      temperature: this.deterministic ? 0 : 0.2,
+      messages,
+      response_format: { type: "json_object" },
+    });
+
+    const raw = completion.choices[0]?.message?.content || "";
 
     const validated = this.validateAndGateJsonAnswer({
       raw,
@@ -567,26 +561,22 @@ export class ChatService {
           "- Gib als Ausgabe NUR valides JSON im vorgegebenen Schema zurück.",
         ].join(" ");
 
-    const chatModel = new ChatOpenAI({
-      model: bot.model || env.OPENAI_COMPLETIONS_MODEL || DEFAULT_CHAT_MODEL,
-      temperature: this.deterministic ? 0 : 0.2,
-      modelKwargs: {
-        response_format: { type: "json_object" },
-      },
-    });
-
-    const messages = [
-      { role: "system" as const, content: systemPrompt },
+    // Build messages array for OpenAI Chat Completions API
+    const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+      { role: "system", content: systemPrompt },
       ...history.map((m) => ({ role: m.role, content: m.content })),
-      { role: "user" as const, content: this.buildJsonAnswerPrompt({ question: message, contextString, allowedChunkIds }) },
+      { role: "user", content: this.buildJsonAnswerPrompt({ question: message, contextString, allowedChunkIds }) },
     ];
 
-    const completion = await chatModel.invoke(messages);
-    const raw = typeof completion.content === "string"
-      ? completion.content
-      : Array.isArray(completion.content)
-        ? completion.content.map((c: any) => ("text" in c ? c.text : c)).join(" ")
-        : "";
+    // Call OpenAI Chat Completions API with JSON mode
+    const completion = await this.client.chat.completions.create({
+      model: bot.model || env.OPENAI_COMPLETIONS_MODEL || DEFAULT_CHAT_MODEL,
+      temperature: this.deterministic ? 0 : 0.2,
+      messages,
+      response_format: { type: "json_object" },
+    });
+
+    const raw = completion.choices[0]?.message?.content || "";
 
     const validated = this.validateAndGateJsonAnswer({
       raw,
@@ -619,13 +609,15 @@ export class ChatService {
   private async rewriteQuery(question: string, conversationContext?: string): Promise<string> {
     if (!env.RAG_ENABLE_QUERY_REWRITE) return question;
     try {
-      const res = await this.rewriteModel.invoke([{ role: "user", content: QUERY_REWRITE_PROMPT(question, conversationContext) }]);
-      const text = typeof res.content === "string"
-        ? res.content
-        : Array.isArray(res.content)
-          ? res.content.map((c: any) => ("text" in c ? c.text : c)).join(" ")
-          : "";
-      const rewritten = (text || "").replace(/\s+/g, " ").trim();
+      // Call OpenAI Chat Completions API for query rewriting
+      const completion = await this.client.chat.completions.create({
+        model: env.OPENAI_COMPLETIONS_MODEL || DEFAULT_CHAT_MODEL,
+        temperature: this.deterministic ? 0 : 0.2,
+        messages: [{ role: "user", content: QUERY_REWRITE_PROMPT(question, conversationContext) }],
+      });
+
+      const text = completion.choices[0]?.message?.content || "";
+      const rewritten = text.replace(/\s+/g, " ").trim();
       return rewritten.length >= 3 ? rewritten.slice(0, 200) : question;
     } catch (err) {
       throw err instanceof Error ? err : new Error("Query rewrite failed");
@@ -699,12 +691,15 @@ export class ChatService {
     if (!docs.length) return [];
     try {
       const prompt = RERANK_PROMPT(query, docs.map((d) => ({ ...d })));
-      const res = await this.rerankModel.invoke([{ role: "user", content: prompt }]);
-      const text = typeof res.content === "string"
-        ? res.content
-        : Array.isArray(res.content)
-          ? res.content.map((c: any) => ("text" in c ? c.text : c)).join(" ")
-          : "";
+
+      // Call OpenAI Chat Completions API for re-ranking
+      const completion = await this.client.chat.completions.create({
+        model: env.OPENAI_COMPLETIONS_MODEL || DEFAULT_CHAT_MODEL,
+        temperature: this.deterministic ? 0 : 0.2,
+        messages: [{ role: "user", content: prompt }],
+      });
+
+      const text = completion.choices[0]?.message?.content || "";
       const ids = text
         .split(/[, ]+/)
         .map((v) => parseInt(v, 10))
@@ -1039,22 +1034,18 @@ export class ChatService {
    */
   private async generateOffTopicResponse(question: string, botName: string, botDescription?: string | null): Promise<string> {
     try {
-      const chatModel = new ChatOpenAI({
+      // Call OpenAI Chat Completions API for off-topic response
+      const completion = await this.client.chat.completions.create({
         model: env.OPENAI_COMPLETIONS_MODEL || DEFAULT_CHAT_MODEL,
         temperature: 0.7, // Slightly higher for more natural variation
+        messages: [
+          { role: "user", content: OFF_TOPIC_RESPONSE_PROMPT(question, botName, botDescription) },
+        ],
       });
 
-      const response = await chatModel.invoke([
-        { role: "user", content: OFF_TOPIC_RESPONSE_PROMPT(question, botName, botDescription) },
-      ]);
-
-      const text = typeof response.content === "string"
-        ? response.content
-        : Array.isArray(response.content)
-          ? response.content.map((c: any) => ("text" in c ? c.text : c)).join(" ")
-          : "";
-
+      const text = completion.choices[0]?.message?.content || "";
       const trimmed = text.trim();
+
       if (trimmed.length > 10 && trimmed.length < 500) {
         return trimmed;
       }

@@ -29,7 +29,7 @@ const envSchema = z.object({
   PINECONE_API_KEY: z.string().optional(),
   PINECONE_INDEX: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
-  OPENAI_COMPLETIONS_MODEL: z.string().default("gpt-4o-mini"),
+  OPENAI_COMPLETIONS_MODEL: z.string().default("gpt-5.1"),
   OPENAI_EMBEDDINGS_MODEL: z.string().default("text-embedding-3-small"),
   EMBEDDINGS_PROVIDER: z.enum(["openai", "deterministic_test"]).default("openai"),
   RAG_ENABLE_QUERY_REWRITE: booleanString.default(true),
@@ -54,7 +54,7 @@ const envSchema = z.object({
   FIRECRAWL_API_KEY: z.string().optional(),
   SCRAPER_PROVIDER: z.enum(["firecrawl", "apify", "local"]).default("local"),
   // Voice configuration (OpenAI Whisper + TTS)
-  OPENAI_TTS_MODEL: z.string().default("tts-1"),
+  OPENAI_TTS_MODEL: z.string().default("tts-1-hd"),
   OPENAI_TTS_VOICE: z.enum(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]).default("nova"),
   OPENAI_WHISPER_MODEL: z.string().default("whisper-1"),
   VOICE_MAX_AUDIO_SIZE_MB: z.coerce.number().default(25),
