@@ -81,11 +81,21 @@ const UNKNOWN_MESSAGES = {
   off_topic: "Dazu kann ich Ihnen leider nicht weiterhelfen. Kann ich Ihnen bei etwas anderem behilflich sein?",
 } as const;
 
-// Fallback-Kontaktinformation für unknown-Antworten
-const CONTACT_FALLBACK = "\n\nSie können uns auch direkt kontaktieren:\n📞 Telefon: 062 918 10 30\n📧 E-Mail: info@maximumm.ch\n🌐 Kontaktformular: https://maximumm.ch/kontakt";
+// Kontaktinformation wird dynamisch aus der Chatbot-Konfiguration geladen
+// Falls keine Kontaktinfo konfiguriert ist, wird kein Fallback angezeigt
+function buildContactFallback(bot: { contactEmail?: string | null; contactPhone?: string | null; contactUrl?: string | null }): string {
+  const parts: string[] = [];
+  if (bot.contactPhone) parts.push(`📞 Telefon: ${bot.contactPhone}`);
+  if (bot.contactEmail) parts.push(`📧 E-Mail: ${bot.contactEmail}`);
+  if (bot.contactUrl) parts.push(`🌐 Kontakt: ${bot.contactUrl}`);
+
+  if (parts.length === 0) return "";
+  return "\n\nSie können uns auch direkt kontaktieren:\n" + parts.join("\n");
+}
 
 // Prompt für natürliche Ablehnung bei Off-Topic-Fragen
-const OFF_TOPIC_RESPONSE_PROMPT = (question: string, botName: string) => `Du bist ein freundlicher Kundenservice-Assistent für ${botName}.
+const OFF_TOPIC_RESPONSE_PROMPT = (question: string, botName: string, botDescription?: string | null) => `Du bist ein freundlicher Kundenservice-Assistent für ${botName}.
+${botDescription ? `Über das Unternehmen: ${botDescription}` : ""}
 
 Ein Kunde hat folgende Frage gestellt: "${question}"
 
@@ -95,12 +105,12 @@ Du darfst diese Frage NICHT inhaltlich beantworten, aber du sollst freundlich un
 Deine Aufgabe:
 1. ZEIGE VERSTÄNDNIS für die Frage (z.B. "Das ist eine interessante Frage zum Wetter" oder "Ich verstehe, dass Sie sich dafür interessieren")
 2. Erkläre freundlich, dass du dazu LEIDER keine Auskunft geben kannst
-3. BIETE KONKRET AN, wobei du helfen kannst: Informationen über Maximumm (Dienstleistungen, Coaching, Therapie, Kontakt, Standorte, Anmeldung)
+3. BIETE KONKRET AN, wobei du helfen kannst: Informationen über ${botName} und dessen Angebote/Dienstleistungen
 
 BEISPIELE für gute Antworten:
-- "Das Wetter ist tatsächlich ein spannendes Thema! Leider kann ich Ihnen dazu keine Auskunft geben. Ich kann Ihnen aber gerne bei Fragen zu unseren Coaching-Angeboten oder Therapiemöglichkeiten weiterhelfen."
-- "Eine gute Frage! Damit kenne ich mich leider nicht aus. Kann ich Ihnen stattdessen Informationen über Maximumm geben, zum Beispiel zu unseren Standorten oder Kontaktmöglichkeiten?"
-- "Das interessiert mich auch! 😊 Aber das liegt leider ausserhalb meines Wissensbereichs. Ich bin hier, um Ihnen bei Fragen rund um Maximumm zu helfen - zum Beispiel zur Anmeldung oder unseren Dienstleistungen."
+- "Das Wetter ist tatsächlich ein spannendes Thema! Leider kann ich Ihnen dazu keine Auskunft geben. Ich kann Ihnen aber gerne bei Fragen zu unseren Angeboten weiterhelfen."
+- "Eine gute Frage! Damit kenne ich mich leider nicht aus. Kann ich Ihnen stattdessen Informationen über ${botName} geben?"
+- "Das interessiert mich auch! 😊 Aber das liegt leider ausserhalb meines Wissensbereichs. Ich bin hier, um Ihnen bei Fragen rund um ${botName} zu helfen."
 
 WICHTIG:
 - Klingt natürlich und menschlich, NICHT roboterhaft oder wie eine Standardantwort
@@ -108,6 +118,7 @@ WICHTIG:
 - Erwähne NIEMALS Begriffe wie "Wissensdatenbank", "KI", "Datenbank", "System" oder "Kontext"
 - Antworte in der Sprache der Frage (Deutsch, Englisch, Französisch)
 - Sei warmherzig und verständnisvoll, nicht abweisend
+- Verwende den Firmennamen "${botName}" statt generische Begriffe
 
 Antworte NUR mit dem Text, keine JSON-Formatierung.`;
 
@@ -141,17 +152,31 @@ const RERANK_PROMPT = (query: string, docs: RankedContext[]) => {
 const DEFAULT_CHAT_MODEL = "gpt-4o-mini";
 
 // Small-talk patterns that should get a friendly response without RAG (DE/EN/FR)
+// These patterns are more flexible to handle typos and additional phrases
 const SMALL_TALK_PATTERNS = [
-  // Greetings (DE/EN/FR)
-  /^(hallo|hi|hey|hello|guten\s*(tag|morgen|abend)|grüezi|servus|moin|salü|bonjour|salut|bonsoir)[\s!.,?]*$/i,
+  // Greetings (DE/EN/FR) - with common typos and optional additional text
+  /^(h[ae]ll?o|hi+|hey+|hello+|guten\s*(tag|morgen|abend)|grüe?zi|servus|moin+|salü|bonjour|salut|bonsoir)(\s|[!.,?]|$)/i,
   // Thanks (DE/EN/FR)
-  /^(danke|vielen\s*dank|merci|thx|thanks|thank\s*you|merci\s*beaucoup)[\s!.,?]*$/i,
+  /^(dank[e]?|vielen\s*dank|merci|thx|thanks|thank\s*you|merci\s*beaucoup)(\s|[!.,?]|$)/i,
   // Goodbye (DE/EN/FR)
-  /^(tschüss|bye|goodbye|auf\s*wiedersehen|ciao|ade|au\s*revoir|à\s*bientôt)[\s!.,?]*$/i,
+  /^(tschü+ss?|bye+|goodbye|auf\s*wiedersehen|ciao|ade|au\s*revoir|à\s*bientôt)(\s|[!.,?]|$)/i,
   // How are you (DE/EN/FR)
-  /^(wie\s*geht('?s)?|wie\s*gehts\s*dir|how\s*are\s*you|how('?s)?\s*it\s*going|comment\s*(ça\s*va|allez-vous))[\s!?,]*$/i,
+  /^(wie\s*geht('?s)?|wie\s*gehts\s*dir|how\s*are\s*you|how('?s)?\s*it\s*going|comment\s*(ça\s*va|allez-vous))(\s|[!?,]|$)/i,
   // OK/Understood (DE/EN/FR)
-  /^(ok|okay|alles\s*klar|verstanden|alright|got\s*it|understood|d'accord|compris)[\s!.,?]*$/i,
+  /^(ok(ay)?|alles\s*klar|verstanden|alright|got\s*it|understood|d'accord|compris)(\s|[!.,?]|$)/i,
+];
+
+// Additional conversational patterns that indicate the user is just testing/checking the bot
+const CONVERSATIONAL_TEST_PATTERNS = [
+  // "Can you hear me?", "Are you there?", "Hello, is anyone there?" etc.
+  /h[öo]r(s?t)?\s*(du|sie)\s*(mich|uns)/i,  // "hörst du mich", "hören Sie mich"
+  /bist\s*du\s*(da|hier|online)/i,           // "bist du da", "bist du hier"
+  /ist\s*(da\s*)?(jemand|wer)/i,             // "ist da jemand", "ist jemand da"
+  /can\s*you\s*hear\s*me/i,                  // English: "can you hear me"
+  /are\s*you\s*there/i,                      // English: "are you there"
+  /anyone\s*there/i,                         // English: "anyone there"
+  /tu\s*m['']?entends/i,                     // French: "tu m'entends"
+  /test(en|ing)?/i,                          // "test", "testing", "testen"
 ];
 
 // Multi-language smalltalk responses
@@ -161,6 +186,7 @@ const SMALL_TALK_RESPONSES_DE = {
   bye: "Auf Wiedersehen! Falls Sie weitere Fragen haben, bin ich jederzeit für Sie da.",
   howAreYou: "Mir geht es gut, danke der Nachfrage! Wie kann ich Ihnen behilflich sein?",
   ok: "Alles klar! Lassen Sie mich wissen, wenn Sie weitere Fragen haben.",
+  checking: "Ja, ich bin hier! 👋 Wie kann ich Ihnen helfen?",
 } as const;
 
 const SMALL_TALK_RESPONSES_EN = {
@@ -169,6 +195,7 @@ const SMALL_TALK_RESPONSES_EN = {
   bye: "Goodbye! If you have more questions, I'm always here to help.",
   howAreYou: "I'm doing well, thank you for asking! How can I assist you?",
   ok: "Alright! Let me know if you have any other questions.",
+  checking: "Yes, I'm here! 👋 How can I help you?",
 } as const;
 
 const SMALL_TALK_RESPONSES_FR = {
@@ -177,6 +204,7 @@ const SMALL_TALK_RESPONSES_FR = {
   bye: "Au revoir! Si vous avez d'autres questions, je suis toujours là pour vous aider.",
   howAreYou: "Je vais bien, merci de demander! Comment puis-je vous aider?",
   ok: "D'accord! Faites-moi savoir si vous avez d'autres questions.",
+  checking: "Oui, je suis là! 👋 Comment puis-je vous aider?",
 } as const;
 
 // Language detection patterns
@@ -230,12 +258,14 @@ function detectClarificationNeeded(message: string): boolean {
 
 /**
  * Builds a clarification response for ambiguous/unclear questions.
+ * Uses generic text that works for any chatbot.
  */
-function buildClarificationResponse(): RagResponse {
+function buildClarificationResponse(botName?: string): RagResponse {
+  const name = botName || "uns";
   return {
     claims: [
       {
-        text: "Wie kann ich Ihnen helfen? Sie können mich fragen zu:\n\n• **Dienstleistungen** - Was bietet Maximumm an?\n• **Kontakt** - Wie erreiche ich Maximumm?\n• **Anmeldung** - Wie kann ich mich anmelden?\n• **Standorte** - Wo befindet sich Maximumm?\n• **Preise** - Was kosten die Angebote?",
+        text: `Wie kann ich Ihnen helfen? Sie können mich fragen zu:\n\n• **Dienstleistungen** - Was bieten wir an?\n• **Kontakt** - Wie erreichen Sie ${name}?\n• **Informationen** - Allgemeine Fragen\n• **Preise** - Was kosten unsere Angebote?`,
         supporting_chunk_ids: [],
       },
     ],
@@ -249,7 +279,7 @@ function buildClarificationResponse(): RagResponse {
 function detectSmallTalk(message: string): SmallTalkType | null {
   const trimmed = message.trim();
 
-  // Greeting
+  // Greeting (also handles "halo", "hallo zusammen", etc.)
   if (SMALL_TALK_PATTERNS[0]!.test(trimmed)) return "greeting";
   // Thanks
   if (SMALL_TALK_PATTERNS[1]!.test(trimmed)) return "thanks";
@@ -259,6 +289,11 @@ function detectSmallTalk(message: string): SmallTalkType | null {
   if (SMALL_TALK_PATTERNS[3]!.test(trimmed)) return "howAreYou";
   // Ok/understood
   if (SMALL_TALK_PATTERNS[4]!.test(trimmed)) return "ok";
+
+  // Check for conversational test patterns ("hörst du mich", "bist du da", etc.)
+  for (const pattern of CONVERSATIONAL_TEST_PATTERNS) {
+    if (pattern.test(trimmed)) return "checking";
+  }
 
   return null;
 }
@@ -363,9 +398,10 @@ export class ChatService {
     const hardGate = this.applyHardGate({ hydrated: topContexts.length });
     if (!topContexts.length || !hardGate.allowed) {
       // Generate a natural, question-specific rejection using LLM
-      const naturalResponse = await this.generateOffTopicResponse(content, bot.name || "unser Unternehmen");
+      const naturalResponse = await this.generateOffTopicResponse(content, bot.name || "unser Unternehmen", bot.description);
+      const contactFallback = buildContactFallback(bot);
       const result: RagResponse = {
-        claims: [{ text: naturalResponse + CONTACT_FALLBACK, supporting_chunk_ids: [] }],
+        claims: [{ text: naturalResponse + contactFallback, supporting_chunk_ids: [] }],
         unknown: true,
         reason: "off_topic",
         debug_id: debugId,
@@ -442,6 +478,7 @@ export class ChatService {
           debugId,
           reason: validated.reason,
           contextTruncated,
+          contactFallback: buildContactFallback(bot),
         });
 
     await messageService.logMessage(session.id, "assistant", JSON.stringify(result));
@@ -493,10 +530,11 @@ export class ChatService {
     const hardGate = this.applyHardGate({ hydrated: topContexts.length });
     if (!topContexts.length || !hardGate.allowed) {
       // Generate a natural, question-specific rejection using LLM
-      const naturalResponse = await this.generateOffTopicResponse(message, bot.name || "unser Unternehmen");
+      const naturalResponse = await this.generateOffTopicResponse(message, bot.name || "unser Unternehmen", bot.description);
+      const contactFallback = buildContactFallback(bot);
       logger.info({ debugId, message }, "Off-topic question, returning natural rejection");
       return {
-        claims: [{ text: naturalResponse + CONTACT_FALLBACK, supporting_chunk_ids: [] }],
+        claims: [{ text: naturalResponse + contactFallback, supporting_chunk_ids: [] }],
         unknown: true,
         reason: "off_topic",
         debug_id: debugId,
@@ -554,7 +592,7 @@ export class ChatService {
     });
 
     if (!validated.ok) {
-      return this.buildUnknownResponse({ debugId, reason: validated.reason, contextTruncated });
+      return this.buildUnknownResponse({ debugId, reason: validated.reason, contextTruncated, contactFallback: buildContactFallback(bot) });
     }
 
     return this.buildVerifiedResponse({
@@ -900,9 +938,9 @@ export class ChatService {
     return sources;
   }
 
-  private buildUnknownResponse(args: { debugId: string; reason: string; contextTruncated?: boolean }): RagResponse {
-    // Füge Fallback-Kontaktinformation zur Fehlermeldung hinzu
-    const reasonWithContact = args.reason + CONTACT_FALLBACK;
+  private buildUnknownResponse(args: { debugId: string; reason: string; contextTruncated?: boolean; contactFallback?: string }): RagResponse {
+    // Füge Fallback-Kontaktinformation zur Fehlermeldung hinzu (falls vorhanden)
+    const reasonWithContact = args.reason + (args.contactFallback || "");
 
     return {
       claims: [],
@@ -996,7 +1034,7 @@ export class ChatService {
    * Instead of a generic "I can't answer that", the LLM acknowledges the specific
    * question and politely declines in a conversational way.
    */
-  private async generateOffTopicResponse(question: string, botName: string): Promise<string> {
+  private async generateOffTopicResponse(question: string, botName: string, botDescription?: string | null): Promise<string> {
     try {
       const chatModel = new ChatOpenAI({
         model: env.OPENAI_COMPLETIONS_MODEL || DEFAULT_CHAT_MODEL,
@@ -1004,7 +1042,7 @@ export class ChatService {
       });
 
       const response = await chatModel.invoke([
-        { role: "user", content: OFF_TOPIC_RESPONSE_PROMPT(question, botName) },
+        { role: "user", content: OFF_TOPIC_RESPONSE_PROMPT(question, botName, botDescription) },
       ]);
 
       const text = typeof response.content === "string"
@@ -1085,7 +1123,16 @@ export class ChatService {
     }
   }
 
-  private async getChatbot(chatbotId: string): Promise<{ id: string; name: string; description: string | null; systemPrompt: string | null; model: string | null }> {
+  private async getChatbot(chatbotId: string): Promise<{
+    id: string;
+    name: string;
+    description: string | null;
+    systemPrompt: string | null;
+    model: string | null;
+    contactEmail: string | null;
+    contactPhone: string | null;
+    contactUrl: string | null;
+  }> {
     const bot = await prisma.chatbot.findUnique({ where: { id: chatbotId } }).catch(() => null);
     if (!bot) {
       return {
@@ -1094,14 +1141,27 @@ export class ChatService {
         description: "Fallback Bot",
         systemPrompt: null,
         model: env.OPENAI_COMPLETIONS_MODEL || DEFAULT_CHAT_MODEL,
+        contactEmail: null,
+        contactPhone: null,
+        contactUrl: null,
       };
     }
+
+    // Extract contact info from theme JSON if present
+    const theme = bot.theme as Record<string, any> | null;
+    const contactEmail = theme?.contactEmail ?? null;
+    const contactPhone = theme?.contactPhone ?? null;
+    const contactUrl = theme?.contactUrl ?? null;
+
     return {
       id: bot.id,
       name: bot.name,
       description: bot.description ?? null,
       systemPrompt: bot.systemPrompt as any as string | null ?? null,
       model: bot.model ?? env.OPENAI_COMPLETIONS_MODEL ?? DEFAULT_CHAT_MODEL,
+      contactEmail,
+      contactPhone,
+      contactUrl,
     };
   }
 }
