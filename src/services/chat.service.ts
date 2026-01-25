@@ -152,18 +152,21 @@ const RERANK_PROMPT = (query: string, docs: RankedContext[]) => {
 const DEFAULT_CHAT_MODEL = "gpt-4o-mini";
 
 // Small-talk patterns that should get a friendly response without RAG (DE/EN/FR)
-// These patterns are more flexible to handle typos and additional phrases
+// IMPORTANT: These patterns must match ONLY pure small-talk, not greetings followed by actual questions
+// We use $ or allow only filler words (zusammen, there, etc.) but NOT question words
 const SMALL_TALK_PATTERNS = [
-  // Greetings (DE/EN/FR) - with common typos and optional additional text
-  /^(h[ae]ll?o|hi+|hey+|hello+|guten\s*(tag|morgen|abend)|grüe?zi|servus|moin+|salü|bonjour|salut|bonsoir)(\s|[!.,?]|$)/i,
+  // Greetings (DE/EN/FR) - with common typos, allows filler words but NOT questions
+  // Matches: "hallo", "hallo!", "hallo zusammen", "hi there", "hey alle"
+  // Does NOT match: "hallo wie kann ich...", "hi ich habe eine frage"
+  /^(h[ae]ll?o|hi+|hey+|hello+|guten\s*(tag|morgen|abend)|grüe?zi|servus|moin+|salü|bonjour|salut|bonsoir)(\s+(zusammen|alle|there|everyone|everyone))?[\s!.,?]*$/i,
   // Thanks (DE/EN/FR)
-  /^(dank[e]?|vielen\s*dank|merci|thx|thanks|thank\s*you|merci\s*beaucoup)(\s|[!.,?]|$)/i,
+  /^(dank[e]?|vielen\s*dank|merci|thx|thanks|thank\s*you|merci\s*beaucoup)(\s+(sehr|vielmals|schön))?[\s!.,?]*$/i,
   // Goodbye (DE/EN/FR)
-  /^(tschü+ss?|bye+|goodbye|auf\s*wiedersehen|ciao|ade|au\s*revoir|à\s*bientôt)(\s|[!.,?]|$)/i,
+  /^(tschü+ss?|bye+|goodbye|auf\s*wiedersehen|ciao|ade|au\s*revoir|à\s*bientôt)[\s!.,?]*$/i,
   // How are you (DE/EN/FR)
-  /^(wie\s*geht('?s)?|wie\s*gehts\s*dir|how\s*are\s*you|how('?s)?\s*it\s*going|comment\s*(ça\s*va|allez-vous))(\s|[!?,]|$)/i,
+  /^(wie\s*geht('?s)?(\s*dir)?|wie\s*gehts\s*dir|how\s*are\s*you|how('?s)?\s*it\s*going|comment\s*(ça\s*va|allez-vous))[\s!?,]*$/i,
   // OK/Understood (DE/EN/FR)
-  /^(ok(ay)?|alles\s*klar|verstanden|alright|got\s*it|understood|d'accord|compris)(\s|[!.,?]|$)/i,
+  /^(ok(ay)?|alles\s*klar|verstanden|alright|got\s*it|understood|d'accord|compris)[\s!.,?]*$/i,
 ];
 
 // Additional conversational patterns that indicate the user is just testing/checking the bot
