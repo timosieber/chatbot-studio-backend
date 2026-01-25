@@ -7,6 +7,8 @@ import { logger } from "../lib/logger.js";
 const WEBM_MAGIC = Buffer.from([0x1a, 0x45, 0xdf, 0xa3]);
 // Ogg magic bytes
 const OGG_MAGIC = Buffer.from([0x4f, 0x67, 0x67, 0x53]); // "OggS"
+// MP4/M4A magic bytes (ftyp box) - iOS Safari uses this format
+const FTYP_MAGIC = Buffer.from([0x66, 0x74, 0x79, 0x70]); // "ftyp" at offset 4
 
 export interface TranscriptionResult {
   text: string;
@@ -83,6 +85,19 @@ class VoiceService {
     // Check for FLAC
     if (header.toString("ascii") === "fLaC") {
       return { ext: "flac", mime: "audio/flac" };
+    }
+
+    // Check for MP4/M4A (iOS Safari format) - ftyp box at offset 4
+    if (buffer.length >= 8) {
+      const ftypMarker = buffer.subarray(4, 8);
+      if (ftypMarker.compare(FTYP_MAGIC) === 0) {
+        // Check the brand to determine if it's audio (m4a) or video (mp4)
+        const brand = buffer.subarray(8, 12).toString("ascii");
+        if (brand === "M4A " || brand === "M4B " || brand === "mp42") {
+          return { ext: "m4a", mime: "audio/mp4" };
+        }
+        return { ext: "mp4", mime: "audio/mp4" };
+      }
     }
 
     return null;
