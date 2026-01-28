@@ -54,13 +54,14 @@ export const buildServer = (): Express => {
   }).then((bots) => {
     const withUrl = bots.filter((b) => b.websiteUrl);
     const withoutUrl = bots.filter((b) => !b.websiteUrl);
-    logger.info("📊 Chatbot websiteUrl Status", {
+    logger.info({
+      msg: "📊 Chatbot websiteUrl Status",
       total: bots.length,
       withWebsiteUrl: withUrl.length,
       withoutWebsiteUrl: withoutUrl.length,
       details: bots.map((b) => ({ id: b.id, name: b.name, hasUrl: !!b.websiteUrl, url: b.websiteUrl })),
     });
-  }).catch((err) => logger.error("Failed to check websiteUrl status", { error: err }));
+  }).catch((err) => logger.error({ msg: "Failed to check websiteUrl status", error: String(err) }));
 
   ingestionWorker.start();
 

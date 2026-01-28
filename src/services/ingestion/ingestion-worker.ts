@@ -1,5 +1,6 @@
 import { env } from "../../config/env.js";
 import { prisma } from "../../lib/prisma.js";
+import type { Prisma } from "@prisma/client";
 import { logger } from "../../lib/logger.js";
 import { scraperRunner } from "../scraper/index.js";
 import type { DatasetItem, DatasetPage, DatasetPdf, ScrapeOptions } from "../scraper/types.js";
@@ -119,7 +120,7 @@ export class IngestionWorker {
     for (const bot of chatbots) {
       const startUrl = bot.websiteUrl;
       if (!startUrl) continue;
-      const options: ScrapeOptions = {
+      const options = {
         startUrls: [startUrl],
         maxDepth: 3,
         maxPages: 200,
@@ -131,7 +132,7 @@ export class IngestionWorker {
             chatbotId: bot.id,
             periodKey,
             scheduledFor,
-            options,
+            options: options as unknown as Prisma.InputJsonValue,
           },
         });
       } catch (error) {
@@ -144,7 +145,7 @@ export class IngestionWorker {
           chatbotId: bot.id,
           kind: "SCRAPE",
           status: "PENDING",
-          payload: { options },
+          payload: { options } as unknown as Prisma.InputJsonValue,
         },
       });
     }
