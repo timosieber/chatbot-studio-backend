@@ -48,6 +48,20 @@ const corsOptions = {
 export const buildServer = (): Express => {
   const app = express();
 
+  // Temporary: Log chatbot websiteUrl status on startup
+  prisma.chatbot.findMany({
+    select: { id: true, name: true, websiteUrl: true },
+  }).then((bots) => {
+    const withUrl = bots.filter((b) => b.websiteUrl);
+    const withoutUrl = bots.filter((b) => !b.websiteUrl);
+    logger.info("📊 Chatbot websiteUrl Status", {
+      total: bots.length,
+      withWebsiteUrl: withUrl.length,
+      withoutWebsiteUrl: withoutUrl.length,
+      details: bots.map((b) => ({ id: b.id, name: b.name, hasUrl: !!b.websiteUrl, url: b.websiteUrl })),
+    });
+  }).catch((err) => logger.error("Failed to check websiteUrl status", { error: err }));
+
   ingestionWorker.start();
 
   app.set("trust proxy", 1);
