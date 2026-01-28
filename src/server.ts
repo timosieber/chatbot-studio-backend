@@ -78,6 +78,32 @@ export const buildServer = (): Express => {
     }),
   );
 
+  // TEMPORARY: One-time migration to set websiteUrl for existing chatbots
+  // DELETE THIS ENDPOINT AFTER USE
+  app.post("/api/admin/set-website-urls", async (req, res) => {
+    const secret = req.headers["x-admin-secret"];
+    if (secret !== "migrate-urls-2026") {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    try {
+      const updates = [
+        { name: "Chatbot-Studio", websiteUrl: "https://chatbot-studio.up.railway.app/" },
+        { name: "Maximumm", websiteUrl: "https://www.maximumm.ch/" },
+      ];
+      const results = [];
+      for (const u of updates) {
+        const result = await prisma.chatbot.updateMany({
+          where: { name: u.name },
+          data: { websiteUrl: u.websiteUrl },
+        });
+        results.push({ name: u.name, updated: result.count });
+      }
+      res.json({ success: true, results });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
   // Convenience alias when the frontend reverse-proxies /api/* to the backend.
   app.get("/api/healthz", (_req, res) =>
     res.json({
