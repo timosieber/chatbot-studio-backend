@@ -16,6 +16,7 @@ const themeSchema = z
 export interface ChatbotPayload {
   name: string;
   description?: string | undefined;
+  websiteUrl?: string | undefined;
   allowedDomains?: string[] | undefined;
   theme?: z.infer<typeof themeSchema> | undefined;
   model?: string | undefined;
@@ -39,6 +40,7 @@ class ChatbotService {
       userId,
       name: payload.name,
       description: payload.description ?? null,
+      websiteUrl: payload.websiteUrl ?? null,
       allowedDomains,
       model: payload.model ?? "gpt-4o-mini",
       status: payload.status ?? "DRAFT",
@@ -78,6 +80,7 @@ class ChatbotService {
 
     if (payload.name !== undefined) data.name = payload.name;
     if (payload.description !== undefined) data.description = payload.description ?? null;
+    if (payload.websiteUrl !== undefined) data.websiteUrl = payload.websiteUrl ?? null;
     if (allowedDomains) data.allowedDomains = allowedDomains;
     if (payload.model !== undefined) data.model = payload.model;
     if (payload.status !== undefined) data.status = payload.status;

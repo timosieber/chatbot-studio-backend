@@ -53,6 +53,7 @@ const envSchema = z.object({
   // Firecrawl configuration
   FIRECRAWL_API_KEY: z.string().optional(),
   SCRAPER_PROVIDER: z.enum(["firecrawl", "apify", "local"]).default("local"),
+  SCRAPE_SCHEDULE_TZ_OFFSET_MINUTES: z.coerce.number().int().min(-720).max(840).default(0),
   // Voice configuration (OpenAI Whisper + TTS)
   OPENAI_TTS_MODEL: z.string().default("tts-1-hd"),
   OPENAI_TTS_VOICE: z.enum(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]).default("nova"),
@@ -103,6 +104,7 @@ export const env = {
   CORS_ALLOWED_ORIGINS_LIST: allowedOrigins,
   SCRAPER_DIR: defaultScraperDir,
   SCRAPER_APIFY_BASE_URL: parsed.data.SCRAPER_APIFY_BASE_URL ?? "https://api.apify.com/v2",
+  SCRAPE_SCHEDULE_TZ_OFFSET_MINUTES: parsed.data.SCRAPE_SCHEDULE_TZ_OFFSET_MINUTES ?? 0,
 };
 
 export const isProduction = env.NODE_ENV === "production";

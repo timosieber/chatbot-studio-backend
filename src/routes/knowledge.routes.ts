@@ -76,6 +76,13 @@ router.post("/sources/scrape", async (req, res, next) => {
       ...(payload.rateLimitPerHost !== undefined ? { rateLimitPerHost: payload.rateLimitPerHost } : {}),
       ...(payload.allowFullDownload !== undefined ? { allowFullDownload: payload.allowFullDownload } : {}),
     };
+    const primaryUrl = payload.startUrls[0];
+    if (primaryUrl) {
+      await prisma.chatbot.update({
+        where: { id: payload.chatbotId },
+        data: { websiteUrl: primaryUrl },
+      });
+    }
     const { jobId } = await knowledgeService.startScrapeIngestion(payload.chatbotId, scrapeOptions);
     res.status(202).json({ status: "PENDING", jobId });
   } catch (error) {

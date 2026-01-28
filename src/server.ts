@@ -83,6 +83,7 @@ export const buildServer = (): Express => {
     description: bot.description ?? null,
     systemPrompt: bot.systemPrompt ?? null,
     logoUrl: bot.logoUrl ?? null,
+    websiteUrl: bot.websiteUrl ?? null,
     allowedDomains: bot.allowedDomains ?? [],
     theme: bot.theme ?? null,
     model: bot.model ?? "gpt-4o-mini",
@@ -131,6 +132,7 @@ export const buildServer = (): Express => {
           userId: req.user!.id,
           name,
           description: req.body?.description ?? null,
+          websiteUrl: req.body?.websiteUrl ?? null,
           allowedDomains: Array.isArray(req.body?.allowedDomains) ? req.body.allowedDomains : [],
           model: req.body?.model || env.OPENAI_COMPLETIONS_MODEL || "gpt-4o-mini",
           status: req.body?.status || "DRAFT",
@@ -172,6 +174,7 @@ export const buildServer = (): Express => {
       if (req.body?.description !== undefined) updateData.description = req.body.description;
       if (req.body?.systemPrompt !== undefined) updateData.systemPrompt = req.body.systemPrompt;
       if (req.body?.logoUrl !== undefined) updateData.logoUrl = req.body.logoUrl;
+      if (req.body?.websiteUrl !== undefined) updateData.websiteUrl = req.body.websiteUrl;
       if (req.body?.theme !== undefined) updateData.theme = req.body.theme;
       if (req.body?.model !== undefined) updateData.model = req.body.model;
       if (req.body?.status !== undefined) updateData.status = req.body.status;

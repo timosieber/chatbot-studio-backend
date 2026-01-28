@@ -62,6 +62,7 @@ export class IngestionWorker {
     this.inFlight = true;
     try {
       await this.reclaimStuckOutboxItems();
+      await this.scheduleMonthlyScrapes();
       await this.processNextPendingJob();
       await this.processOutboxBatch();
       await this.finalizeJobsIfPossible();
@@ -90,6 +91,62 @@ export class IngestionWorker {
     });
     if (reclaimed.count > 0) {
       logger.warn({ reclaimed: reclaimed.count, cutoff: cutoff.toISOString() }, "Reclaimed stuck outbox items");
+    }
+  }
+
+  private async scheduleMonthlyScrapes(): Promise<void> {
+    const now = new Date();
+    const offsetMs = Number.isFinite(env.SCRAPE_SCHEDULE_TZ_OFFSET_MINUTES)
+      ? env.SCRAPE_SCHEDULE_TZ_OFFSET_MINUTES * 60_000
+      : 0;
+    const localNow = new Date(now.getTime() + offsetMs);
+    const isFirstDay = localNow.getUTCDate() === 1;
+    const isTargetHour = localNow.getUTCHours() === 5;
+    if (!isFirstDay || !isTargetHour) return;
+
+    const periodKey = `${localNow.getUTCFullYear()}-${String(localNow.getUTCMonth() + 1).padStart(2, "0")}`;
+    const scheduledFor = new Date(
+      Date.UTC(localNow.getUTCFullYear(), localNow.getUTCMonth(), 1, 5, 0, 0, 0)
+    );
+
+    // Prefer the initial website URL stored on the chatbot.
+    const chatbots = await prisma.chatbot.findMany({
+      where: { websiteUrl: { not: null } },
+      select: { id: true, websiteUrl: true },
+    });
+    if (!chatbots.length) return;
+
+    for (const bot of chatbots) {
+      const startUrl = bot.websiteUrl;
+      if (!startUrl) continue;
+      const options: ScrapeOptions = {
+        startUrls: [startUrl],
+        maxDepth: 3,
+        maxPages: 200,
+      };
+
+      try {
+        await prisma.scrapeScheduleRun.create({
+          data: {
+            chatbotId: bot.id,
+            periodKey,
+            scheduledFor,
+            options,
+          },
+        });
+      } catch (error) {
+        // Likely already scheduled this month for this chatbot.
+        continue;
+      }
+
+      await prisma.ingestionJob.create({
+        data: {
+          chatbotId: bot.id,
+          kind: "SCRAPE",
+          status: "PENDING",
+          payload: { options },
+        },
+      });
     }
   }
 
@@ -343,7 +400,7 @@ export class IngestionWorker {
         pagesArr.push({ pageNo: 1, text: pdf.perplexity_content });
       }
 
-      return await this.stagePdfSource({
+      const staged = await this.stagePdfSource({
         jobId: args.jobId,
         chatbotId: args.chatbotId,
         knowledgeSourceId: pdfSource.id,
@@ -355,6 +412,7 @@ export class IngestionWorker {
         textQuality: (pdf.text_quality ?? null) as any,
         pages: pagesArr,
       });
+      return staged;
     };
 
     for (const page of pages) {
@@ -441,7 +499,22 @@ export class IngestionWorker {
     }
 
     if (stagedChunks === 0) {
-      throw new Error("Scrape job produced no ingestible content");
+      console.log(`[IngestionWorker] Scrape job ${args.jobId} produced no changes; marking as succeeded`);
+      await prisma.ingestionJob.update({
+        where: { id: args.jobId },
+        data: { status: "SUCCEEDED", finishedAt: new Date(), error: "No content changes detected" },
+      });
+      try {
+        await prisma.knowledgeSource.updateMany({
+          where: { chatbotId: args.chatbotId, lastIngestionJobId: args.jobId },
+          data: { status: "READY", lastIngestedAt: new Date() },
+        });
+        await prisma.chatbot.update({ where: { id: args.chatbotId }, data: { status: "ACTIVE" } });
+        provisioningEventsService.publish(args.chatbotId, { type: "completed", chatbotId: args.chatbotId, status: "ACTIVE" });
+      } catch (updateErr) {
+        logger.error({ err: updateErr, chatbotId: args.chatbotId, ingestionJobId: args.jobId }, "Failed to finalize no-change scrape job");
+      }
+      return;
     }
   }
 
@@ -502,12 +575,28 @@ export class IngestionWorker {
       const source = await tx.knowledgeSource.findUnique({ where: { id: args.knowledgeSourceId } });
       if (!source) throw new Error("KnowledgeSource not found");
 
+      const priorRevision = source.currentRevision ?? null;
+      if (priorRevision === sourceRevision) {
+        // No content changes; skip staging and outbox updates.
+        await tx.knowledgeSource.update({
+          where: { id: args.knowledgeSourceId },
+          data: {
+            status: "PENDING",
+            lastIngestionJobId: args.jobId,
+            canonicalUrl: args.canonicalUrl ?? source.canonicalUrl ?? null,
+            originalUrl: args.originalUrl ?? source.originalUrl ?? null,
+            extractionMethod: args.extractionMethod ?? source.extractionMethod ?? null,
+            textQuality: args.textQuality ?? source.textQuality ?? null,
+          },
+        });
+        return;
+      }
+
       const activeChunks = await tx.knowledgeChunk.findMany({
         where: { knowledgeSourceId: args.knowledgeSourceId, deletedAt: null },
         select: { chunkId: true },
       });
 
-      const priorRevision = source.currentRevision ?? null;
       const revisionChanged = priorRevision !== sourceRevision && activeChunks.length > 0;
       if (revisionChanged) {
         await tx.knowledgeChunk.updateMany({
@@ -618,12 +707,28 @@ export class IngestionWorker {
       const source = await tx.knowledgeSource.findUnique({ where: { id: args.knowledgeSourceId } });
       if (!source) throw new Error("KnowledgeSource not found");
 
+      const priorRevision = source.currentRevision ?? null;
+      if (priorRevision === sourceRevision) {
+        // No content changes; skip staging and outbox updates.
+        await tx.knowledgeSource.update({
+          where: { id: args.knowledgeSourceId },
+          data: {
+            status: "PENDING",
+            lastIngestionJobId: args.jobId,
+            canonicalUrl: args.canonicalUrl ?? source.canonicalUrl ?? null,
+            originalUrl: args.originalUrl ?? source.originalUrl ?? null,
+            extractionMethod: args.extractionMethod ?? source.extractionMethod ?? null,
+            textQuality: args.textQuality ?? source.textQuality ?? null,
+          },
+        });
+        return;
+      }
+
       const activeChunks = await tx.knowledgeChunk.findMany({
         where: { knowledgeSourceId: args.knowledgeSourceId, deletedAt: null },
         select: { chunkId: true },
       });
 
-      const priorRevision = source.currentRevision ?? null;
       const revisionChanged = priorRevision !== sourceRevision && activeChunks.length > 0;
       if (revisionChanged) {
         await tx.knowledgeChunk.updateMany({

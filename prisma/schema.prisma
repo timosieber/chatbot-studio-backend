@@ -88,6 +88,7 @@ model Chatbot {
   description    String?
   systemPrompt   String?
   logoUrl        String?
+  websiteUrl     String?
   allowedDomains Json                 @default("[]")
   theme          Json?
   model          String               @default("gpt-4o-mini")
@@ -97,6 +98,7 @@ model Chatbot {
   sessions       Session[]
   knowledgeSources KnowledgeSource[]
   ingestionJobs  IngestionJob[]
+  scrapeScheduleRuns ScrapeScheduleRun[]
 
   @@index([userId])
 }
@@ -186,6 +188,20 @@ model IngestionJob {
 
   @@index([chatbotId, status, createdAt])
   @@index([knowledgeSourceId])
+}
+
+model ScrapeScheduleRun {
+  id           String   @id @default(cuid())
+  chatbotId    String
+  chatbot      Chatbot  @relation(fields: [chatbotId], references: [id], onDelete: Cascade)
+  periodKey    String
+  scheduledFor DateTime
+  options      Json
+  createdAt    DateTime @default(now())
+
+  @@unique([chatbotId, periodKey])
+  @@index([periodKey])
+  @@index([chatbotId])
 }
 
 model KnowledgeChunk {
